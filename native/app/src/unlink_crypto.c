@@ -55,24 +55,24 @@ static void mulPoint(uint8_t *rx32,uint8_t *ry32,const cx_bn_t bx,const cx_bn_t 
   cx_bn_export(R[4],rx32,N); cx_bn_export(R[5],ry32,N);
 }
 
-static void pow5(cx_bn_t r,const cx_bn_t v){ cx_bn_t o=R[15]; fmul(o,v,v); fmul(o,o,o); fmul(r,v,o); }
+static void pow5(cx_bn_t r,const cx_bn_t v){ cx_bn_t o=R[15],o2=R[14]; fmul(o,v,v); fmul(o2,o,o); fmul(r,v,o2); } // o2 avoids cx_bn_mod_mul(r,a,a) with r==a==b (broken on SE)
 
 // hm = Poseidon5(in0..in4) (host buffers), exported to out32. Uses R[0..14].
 static void poseidon5(uint8_t *out32, const uint8_t *in0,const uint8_t *in1,const uint8_t *in2,const uint8_t *in3,const uint8_t *in4){
   cx_bn_t *st=&R[0], *ns=&R[6], acc=R[12], c=R[13], tmp=R[14];
+  uint8_t cbuf[N];   // RAM copy of flash constants (cx_bn_init needs a RAM source on the SE)
   cx_bn_set_u32(st[0],0);
   cx_bn_init(st[1],in0,N); cx_bn_init(st[2],in1,N); cx_bn_init(st[3],in2,N); cx_bn_init(st[4],in3,N); cx_bn_init(st[5],in4,N);
   for (int x = 0; x < POSEIDON_NROUNDS; x++) {
-    io_seproxyhal_io_heartbeat();
     for (int y = 0; y < POSEIDON_T; y++) {
-      cx_bn_init(c, POSEIDON_C[x*POSEIDON_T + y], N);
-      fadd(st[y], st[y], c);
+      memcpy(cbuf, POSEIDON_C[x*POSEIDON_T + y], N); cx_bn_init(c, cbuf, N);
+      cx_bn_mod_add(R[16], st[y], c, P); cx_bn_copy(st[y], R[16]); // r==a-safe
       if (x < POSEIDON_RF/2 || x >= POSEIDON_RF/2 + POSEIDON_RP) pow5(st[y], st[y]);
       else if (y == 0) pow5(st[y], st[y]);
     }
     for (int xx = 0; xx < POSEIDON_T; xx++) {
       cx_bn_set_u32(acc,0);
-      for (int yy = 0; yy < POSEIDON_T; yy++) { cx_bn_init(c, POSEIDON_M[xx*POSEIDON_T+yy], N); fmul(tmp,c,st[yy]); fadd(acc,acc,tmp); }
+      for (int yy = 0; yy < POSEIDON_T; yy++) { memcpy(cbuf, POSEIDON_M[xx*POSEIDON_T+yy], N); cx_bn_init(c, cbuf, N); fmul(tmp,c,st[yy]); cx_bn_mod_add(R[16], acc, tmp, P); cx_bn_copy(acc, R[16]); }
       cx_bn_copy(ns[xx], acc);
     }
     for (int i = 0; i < POSEIDON_T; i++) cx_bn_copy(st[i], ns[i]);
@@ -132,5 +132,27 @@ void unlink_sign(const uint8_t *key, size_t keylen, const uint8_t msg_be32[32],
   cx_bn_mod_add(R[5], R[0], R[4], SUB);               // r + hm*s mod sub
   cx_bn_export(R[5], S, N);
 
+  cx_bn_unlock();
+}
+
+// DEBUG: run ONE Poseidon round and export the full state (6 x 32 bytes).
+void unlink_poseidon_test(uint8_t out[192]){
+  uint8_t cbuf[N];
+  cx_bn_lock(N,0);
+  cx_bn_alloc_init(&P,N,PARM_P,N);
+  for(int i=0;i<NREG;i++) cx_bn_alloc(&R[i],N);
+  cx_bn_t *st=&R[0], *ns=&R[6], acc=R[12], c=R[13], tmp=R[14];
+  cx_bn_set_u32(st[0],0); for(int y=1;y<6;y++) cx_bn_set_u32(st[y],y);   // [0,1,2,3,4,5]
+  for(int y=0;y<6;y++){
+    memcpy(cbuf,POSEIDON_C[y],N); cx_bn_init(c,cbuf,N);
+    cx_bn_mod_add(R[16],st[y],c,P); cx_bn_copy(st[y],R[16]);
+    pow5(st[y],st[y]);
+  }
+  for(int xx=0;xx<6;xx++){
+    cx_bn_set_u32(acc,0);
+    for(int yy=0;yy<6;yy++){ memcpy(cbuf,POSEIDON_M[xx*6+yy],N); cx_bn_init(c,cbuf,N); fmul(tmp,c,st[yy]); cx_bn_mod_add(R[16],acc,tmp,P); cx_bn_copy(acc,R[16]); }
+    cx_bn_copy(ns[xx],acc);
+  }
+  for(int i=0;i<6;i++) cx_bn_export(ns[i], out+i*32, N);
   cx_bn_unlock();
 }

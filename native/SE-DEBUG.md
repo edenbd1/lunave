@@ -58,3 +58,34 @@ The hard crypto (BabyJubJub scalar mul, projective add, modular inverse) is
 byte-exact on the device. One SE-aliasing class is found & fixed (in-place mul).
 The remaining gap is a small, locatable Poseidon divergence — pending a stable
 transport to finish the binary-search.
+
+## RESOLVED ✅ — full signature byte-exact on hardware (Apex P)
+The "remaining Poseidon divergence" was NOT a partial-round logic bug. It was a
+second instance of the SAME SE cx_bn quirk: **`cx_bn_mod_add` / `cx_bn_mod_mul`
+can leave the result in `[modulus, 2·modulus)` instead of fully reducing.**
+
+Located by exporting the round-0 state in two slices:
+- SBOX only (add C + pow5 all lanes) → byte-exact on all 6 lanes ✅
+- SBOX + MIX (MDS accumulation) → `ns[i] == correct + P` on 5/6 lanes
+  (`ns[3]` happened to land < P). `dev − host == P` exactly. Not congruence
+  drift — a missing final subtraction.
+
+Fix: `cx_bn_reduce(acc, R[16], P)` after each MDS accumulation step (restores the
+`acc < P` invariant), and the same after the final `S = (r + hm·s) mod subOrder`
+(it landed at `S_exp + subOrder` exactly).
+
+Result — signing known vector 0 on the device returns, byte-exact vs the host:
+```
+Ax  111ad6eaff70758b7ad109a32526c54ae58eff19a8667f0b41b8c228f86588ee  ✅
+Ay  1810293488974f0ae2d566a860d00c5bd24fc094b076e260e3b9b65b0555fb92  ✅
+R8x 0afcb8a38dc22f29cdbda58c3ac10550734a791cf4fa00181efe1fad4af3febf  ✅
+R8y 14ce4560b8c96fb075cd94a8e773a0ccfd49ece3d67f3c2764e8f7be04b4e64d  ✅
+S   01f19b24c634473671fc821393051b631b338608675e489d7d05f6ab4fc55318  ✅
+```
+The Ledger native app signs Unlink EdDSA-Poseidon on the Secure Element, and the
+signature verifies under `@zk-kit/eddsa-poseidon`.
+
+### SE cx_bn rule of thumb (Apex P, SE 1.1.1)
+Never trust `cx_bn_mod_add` / `cx_bn_mod_mul` to return a fully-reduced result.
+After any accumulation chain, call `cx_bn_reduce(out, acc, modulus)`. And never
+use `cx_bn_mod_mul(r, a, a, n)` with `r == a` (in-place square) — use a 2nd reg.

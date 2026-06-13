@@ -32,7 +32,7 @@ static int sign_and_reply(void) {
     os_perso_derive_node_bip32(CX_CURVE_256K1, UNLINK_PATH, 5, key, NULL);
 
     explicit_bzero(key, sizeof(key));
-    uint8_t resp[32];
+    uint8_t resp[192];
     unlink_poseidon_test(resp, (int) g_nrounds);   // DEBUG: g_nrounds rounds
     return io_send_response_pointer(resp, sizeof(resp), SWO_SUCCESS);
 }

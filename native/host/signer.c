@@ -67,33 +67,32 @@ static void finv(mpz_t r,const mpz_t a){mpz_invert(r,a,P);}
 static void fdiv(mpz_t r,const mpz_t a,const mpz_t b){mpz_t i;mpz_init(i);finv(i,b);fmul(r,a,i);mpz_clear(i);}
 
 // ---------- twisted Edwards (BabyJubJub) ----------
-// p3 = p1 + p2  (matches addPoint in the SDK)
-static void addPoint(mpz_t rx,mpz_t ry,const mpz_t x1,const mpz_t y1,const mpz_t x2,const mpz_t y2){
-  mpz_t beta,gamma,delta,tau,dtau,t1,t2,num,den;
-  mpz_inits(beta,gamma,delta,tau,dtau,t1,t2,num,den,NULL);
-  fmul(beta,x1,y2);
-  fmul(gamma,y1,x2);
-  fmul(t1,A_,x1); fsub(t1,y1,t1);      // y1 - a*x1
-  fadd(t2,x2,y2);                       // x2 + y2
-  fmul(delta,t1,t2);
-  fmul(tau,beta,gamma);
-  fmul(dtau,D_,tau);
-  fadd(num,beta,gamma); mpz_set_ui(t1,1); fadd(den,t1,dtau); fdiv(rx,num,den);   // (beta+gamma)/(1+dtau)
-  fmul(t1,A_,beta); fsub(t1,t1,gamma); fadd(num,delta,t1);                        // delta + a*beta - gamma
-  mpz_set_ui(t2,1); fsub(den,t2,dtau); fdiv(ry,num,den);                          // /(1-dtau)
-  mpz_clears(beta,gamma,delta,tau,dtau,t1,t2,num,den,NULL);
+// Projective unified add (no inversion) — same formulas as the on-device version.
+static void addProj(mpz_t X3,mpz_t Y3,mpz_t Z3,
+                    const mpz_t X1,const mpz_t Y1,const mpz_t Z1,
+                    const mpz_t X2,const mpz_t Y2,const mpz_t Z2){
+  mpz_t A,B,C,D,E,F,G,t1,t2; mpz_inits(A,B,C,D,E,F,G,t1,t2,NULL);
+  fmul(A,Z1,Z2); fmul(B,A,A); fmul(C,X1,X2); fmul(D,Y1,Y2);
+  fmul(E,D_,C); fmul(E,E,D); fsub(F,B,E); fadd(G,B,E);
+  fadd(t1,X1,Y1); fadd(t2,X2,Y2); fmul(t1,t1,t2); fsub(t1,t1,C); fsub(t1,t1,D);
+  fmul(t1,t1,F); fmul(X3,t1,A);
+  fmul(t2,A_,C); fsub(t2,D,t2); fmul(t2,t2,G); fmul(Y3,t2,A);
+  fmul(Z3,F,G);
+  mpz_clears(A,B,C,D,E,F,G,t1,t2,NULL);
 }
-// R = e * (bx,by)  via double-and-add (matches mulPointEscalar)
+// R = e * (bx,by) — projective double-and-add, single inversion at end.
 static void mulPoint(mpz_t rx,mpz_t ry,const mpz_t bx,const mpz_t by,const mpz_t e){
-  mpz_t resx,resy,ex,ey,rem,nx,ny; mpz_inits(resx,resy,ex,ey,rem,nx,ny,NULL);
-  mpz_set_ui(resx,0); mpz_set_ui(resy,1); mpz_set(ex,bx); mpz_set(ey,by); mpz_set(rem,e);
+  mpz_t Rx,Ry,Rz,Px,Py,Pz,Tx,Ty,Tz,zi,rem;
+  mpz_inits(Rx,Ry,Rz,Px,Py,Pz,Tx,Ty,Tz,zi,rem,NULL);
+  mpz_set_ui(Rx,0); mpz_set_ui(Ry,1); mpz_set_ui(Rz,1);
+  mpz_set(Px,bx); mpz_set(Py,by); mpz_set_ui(Pz,1); mpz_set(rem,e);
   while(mpz_sgn(rem)!=0){
-    if(mpz_odd_p(rem)){ addPoint(nx,ny,resx,resy,ex,ey); mpz_set(resx,nx); mpz_set(resy,ny); }
-    addPoint(nx,ny,ex,ey,ex,ey); mpz_set(ex,nx); mpz_set(ey,ny);
+    if(mpz_odd_p(rem)){ addProj(Tx,Ty,Tz, Rx,Ry,Rz, Px,Py,Pz); mpz_set(Rx,Tx);mpz_set(Ry,Ty);mpz_set(Rz,Tz); }
+    addProj(Tx,Ty,Tz, Px,Py,Pz, Px,Py,Pz); mpz_set(Px,Tx);mpz_set(Py,Ty);mpz_set(Pz,Tz);
     mpz_fdiv_q_2exp(rem,rem,1);
   }
-  mpz_set(rx,resx); mpz_set(ry,resy);
-  mpz_clears(resx,resy,ex,ey,rem,nx,ny,NULL);
+  finv(zi,Rz); fmul(rx,Rx,zi); fmul(ry,Ry,zi);
+  mpz_clears(Rx,Ry,Rz,Px,Py,Pz,Tx,Ty,Tz,zi,rem,NULL);
 }
 
 // ---------- Poseidon t=6 ----------

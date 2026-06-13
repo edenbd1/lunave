@@ -65,7 +65,13 @@ int handler_get_public_key(buffer_t *cdata, bool display) {
     g_pairs[1].value = "amount & recipient hidden";
     g_pairList.nbPairs = 2;
     g_pairList.pairs = g_pairs;
+    (void) review_choice;
 
+#ifdef UNLINK_IMMEDIATE_SIGN
+    // Sign immediately (no blocking review) — used to capture a hardware signature
+    // over macOS HID, which fails on the USB re-enumeration during the on-device UI.
+    return sign_and_reply();
+#else
     nbgl_useCaseReview(TYPE_TRANSACTION,
                        &g_pairList,
                        &ICON_APP_BOILERPLATE,
@@ -74,4 +80,5 @@ int handler_get_public_key(buffer_t *cdata, bool display) {
                        "Sign Unlink\nprivate transaction?",
                        review_choice);
     return 0;
+#endif
 }

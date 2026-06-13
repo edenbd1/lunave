@@ -19,42 +19,48 @@ static void fsub(cx_bn_t r, const cx_bn_t a, const cx_bn_t b){ cx_bn_mod_sub(r,a
 static void finv(cx_bn_t r, const cx_bn_t a){ cx_bn_mod_invert_nprime(r,a,P); }
 static void fdiv(cx_bn_t r, const cx_bn_t a, const cx_bn_t b){ cx_bn_t i; cx_bn_alloc(&i,32); finv(i,b); fmul(r,a,i); cx_bn_destroy(&i); }
 
-// p3 = p1 + p2 on BabyJubJub (matches addPoint)
-static void addPoint(cx_bn_t rx,cx_bn_t ry,const cx_bn_t x1,const cx_bn_t y1,const cx_bn_t x2,const cx_bn_t y2){
-  cx_bn_t beta,gamma,delta,tau,dtau,t1,t2,num,den,one;
-  cx_bn_alloc(&beta,32);cx_bn_alloc(&gamma,32);cx_bn_alloc(&delta,32);cx_bn_alloc(&tau,32);
-  cx_bn_alloc(&dtau,32);cx_bn_alloc(&t1,32);cx_bn_alloc(&t2,32);cx_bn_alloc(&num,32);cx_bn_alloc(&den,32);cx_bn_alloc(&one,32);
-  cx_bn_set_u32(one,1);
-  fmul(beta,x1,y2);
-  fmul(gamma,y1,x2);
-  fmul(t1,bA,x1); fsub(t1,y1,t1);     // y1 - a*x1
-  fadd(t2,x2,y2);                      // x2 + y2
-  fmul(delta,t1,t2);
-  fmul(tau,beta,gamma);
-  fmul(dtau,bD,tau);
-  fadd(num,beta,gamma); fadd(den,one,dtau); fdiv(rx,num,den);             // (beta+gamma)/(1+dtau)
-  fmul(t1,bA,beta); fsub(t1,t1,gamma); fadd(num,delta,t1);                // delta + a*beta - gamma
-  fsub(den,one,dtau); fdiv(ry,num,den);                                  // /(1-dtau)
-  cx_bn_destroy(&beta);cx_bn_destroy(&gamma);cx_bn_destroy(&delta);cx_bn_destroy(&tau);
-  cx_bn_destroy(&dtau);cx_bn_destroy(&t1);cx_bn_destroy(&t2);cx_bn_destroy(&num);cx_bn_destroy(&den);cx_bn_destroy(&one);
+// Projective twisted-Edwards point add (unified, works for doubling) — NO inversion.
+// (X:Y:Z) with x=X/Z, y=Y/Z. add-2008-bbjlp.
+static void addProj(cx_bn_t X3,cx_bn_t Y3,cx_bn_t Z3,
+                    const cx_bn_t X1,const cx_bn_t Y1,const cx_bn_t Z1,
+                    const cx_bn_t X2,const cx_bn_t Y2,const cx_bn_t Z2){
+  cx_bn_t A,B,C,D,E,F,G,t1,t2;
+  cx_bn_alloc(&A,32);cx_bn_alloc(&B,32);cx_bn_alloc(&C,32);cx_bn_alloc(&D,32);
+  cx_bn_alloc(&E,32);cx_bn_alloc(&F,32);cx_bn_alloc(&G,32);cx_bn_alloc(&t1,32);cx_bn_alloc(&t2,32);
+  fmul(A,Z1,Z2);
+  fmul(B,A,A);
+  fmul(C,X1,X2);
+  fmul(D,Y1,Y2);
+  fmul(E,bD,C); fmul(E,E,D);                 // E = d*C*D
+  fsub(F,B,E);
+  fadd(G,B,E);
+  fadd(t1,X1,Y1); fadd(t2,X2,Y2); fmul(t1,t1,t2); fsub(t1,t1,C); fsub(t1,t1,D); // (X1+Y1)(X2+Y2)-C-D
+  fmul(t1,t1,F); fmul(X3,t1,A);              // X3 = A*F*(...)
+  fmul(t2,bA,C); fsub(t2,D,t2); fmul(t2,t2,G); fmul(Y3,t2,A);                    // Y3 = A*G*(D-a*C)
+  fmul(Z3,F,G);                              // Z3 = F*G
+  cx_bn_destroy(&A);cx_bn_destroy(&B);cx_bn_destroy(&C);cx_bn_destroy(&D);
+  cx_bn_destroy(&E);cx_bn_destroy(&F);cx_bn_destroy(&G);cx_bn_destroy(&t1);cx_bn_destroy(&t2);
 }
 
-// R = e·(bx,by) double-and-add (matches mulPointEscalar)
+// R = e·(bx,by) — projective double-and-add, single inversion at the end.
 static void mulPoint(cx_bn_t rx,cx_bn_t ry,const cx_bn_t bx,const cx_bn_t by,const cx_bn_t e){
-  cx_bn_t resx,resy,ex,ey,rem,nx,ny; bool bit; int diff;
-  cx_bn_alloc(&resx,32);cx_bn_alloc(&resy,32);cx_bn_alloc(&ex,32);cx_bn_alloc(&ey,32);
-  cx_bn_alloc(&rem,32);cx_bn_alloc(&nx,32);cx_bn_alloc(&ny,32);
-  cx_bn_set_u32(resx,0); cx_bn_set_u32(resy,1); cx_bn_copy(ex,bx); cx_bn_copy(ey,by); cx_bn_copy(rem,e);
+  cx_bn_t Rx,Ry,Rz,Px,Py,Pz,Tx,Ty,Tz,zi,rem; bool bit; int diff;
+  cx_bn_alloc(&Rx,32);cx_bn_alloc(&Ry,32);cx_bn_alloc(&Rz,32);
+  cx_bn_alloc(&Px,32);cx_bn_alloc(&Py,32);cx_bn_alloc(&Pz,32);
+  cx_bn_alloc(&Tx,32);cx_bn_alloc(&Ty,32);cx_bn_alloc(&Tz,32);cx_bn_alloc(&zi,32);cx_bn_alloc(&rem,32);
+  cx_bn_set_u32(Rx,0); cx_bn_set_u32(Ry,1); cx_bn_set_u32(Rz,1);   // identity (0:1:1)
+  cx_bn_copy(Px,bx); cx_bn_copy(Py,by); cx_bn_set_u32(Pz,1);
+  cx_bn_copy(rem,e);
   for(;;){
     cx_bn_cmp_u32(rem,0,&diff); if(diff==0) break;
     cx_bn_tst_bit(rem,0,&bit);
-    if(bit){ addPoint(nx,ny,resx,resy,ex,ey); cx_bn_copy(resx,nx); cx_bn_copy(resy,ny); }
-    addPoint(nx,ny,ex,ey,ex,ey); cx_bn_copy(ex,nx); cx_bn_copy(ey,ny);
+    if(bit){ addProj(Tx,Ty,Tz, Rx,Ry,Rz, Px,Py,Pz); cx_bn_copy(Rx,Tx);cx_bn_copy(Ry,Ty);cx_bn_copy(Rz,Tz); }
+    addProj(Tx,Ty,Tz, Px,Py,Pz, Px,Py,Pz); cx_bn_copy(Px,Tx);cx_bn_copy(Py,Ty);cx_bn_copy(Pz,Tz); // double
     cx_bn_shr(rem,1);
   }
-  cx_bn_copy(rx,resx); cx_bn_copy(ry,resy);
-  cx_bn_destroy(&resx);cx_bn_destroy(&resy);cx_bn_destroy(&ex);cx_bn_destroy(&ey);
-  cx_bn_destroy(&rem);cx_bn_destroy(&nx);cx_bn_destroy(&ny);
+  finv(zi,Rz); fmul(rx,Rx,zi); fmul(ry,Ry,zi);   // affine: one inversion
+  cx_bn_destroy(&Rx);cx_bn_destroy(&Ry);cx_bn_destroy(&Rz);cx_bn_destroy(&Px);cx_bn_destroy(&Py);
+  cx_bn_destroy(&Pz);cx_bn_destroy(&Tx);cx_bn_destroy(&Ty);cx_bn_destroy(&Tz);cx_bn_destroy(&zi);cx_bn_destroy(&rem);
 }
 
 static void pow5(cx_bn_t r,const cx_bn_t v){ cx_bn_t o; cx_bn_alloc(&o,32); fmul(o,v,v); fmul(o,o,o); fmul(r,v,o); cx_bn_destroy(&o); }

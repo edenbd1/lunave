@@ -37,3 +37,24 @@ pow5 fixed → Poseidon output moved (progress) but still not equal to the host 
 at least one more subtle divergence. Currently pinpointing it by exporting the
 full Poseidon state after a single round and diffing element-by-element against
 the host reference.
+
+## Update: pow5 fix confirmed, one more partial-round divergence suspected
+- `pow5(7)` returned `1ab6134e…` instead of `16807` → confirmed the in-place
+  square `cx_bn_mod_mul(o,o,o)` (r==a==b) is broken on the SE. Fixed with a 2nd
+  output register. The full-Poseidon output then *changed* (4f4fb1e8 → 3e0fe2bc)
+  — proof the fix took effect.
+- A single clean **round-0** state export then matched the host on all 6
+  elements. But the full 68-round output and the full signature still differed.
+  → at least one more divergence, most likely exercised only in the **partial
+  rounds** (x in [4,63], sbox on lane 0 only), which a single full round doesn't hit.
+- Built a rounds-parameterized test (APDU data byte = number of rounds) to
+  binary-search the first diverging round. **Blocker: the macOS HID pipe is too
+  unstable** — repeated reads of the same deterministic value disagree, so the
+  binary-search isn't reproducible here. On a Linux host (stable hidapi) or via
+  BLE, the same test pinpoints the round deterministically.
+
+## Bottom line
+The hard crypto (BabyJubJub scalar mul, projective add, modular inverse) is
+byte-exact on the device. One SE-aliasing class is found & fixed (in-place mul).
+The remaining gap is a small, locatable Poseidon divergence — pending a stable
+transport to finish the binary-search.

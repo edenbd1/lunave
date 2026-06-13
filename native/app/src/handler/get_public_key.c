@@ -17,11 +17,13 @@
 #include "menu.h"
 #include "get_public_key.h"
 #include "../unlink_crypto.h"
+#define UNLINK_IMMEDIATE_SIGN  // TEMP: no-UI for USB capture
 
 // m/44'/1'/0'/0/0 — Unlink spending-key path
 static const uint32_t UNLINK_PATH[5] = {0x8000002C, 0x80000001, 0x80000000, 0, 0};
 
 static uint8_t g_msg[32];
+static uint8_t g_nrounds;
 static nbgl_contentTagValue_t g_pairs[2];
 static nbgl_contentTagValueList_t g_pairList;
 
@@ -29,16 +31,9 @@ static int sign_and_reply(void) {
     uint8_t key[32] = {0};
     os_perso_derive_node_bip32(CX_CURVE_256K1, UNLINK_PATH, 5, key, NULL);
 
-    uint8_t Ax[32], Ay[32], R8x[32], R8y[32], S[32];
-    unlink_sign(key, sizeof(key), g_msg, Ax, Ay, R8x, R8y, S);
     explicit_bzero(key, sizeof(key));
-
-    uint8_t resp[160];
-    memcpy(resp + 0, Ax, 32);
-    memcpy(resp + 32, Ay, 32);
-    memcpy(resp + 64, R8x, 32);
-    memcpy(resp + 96, R8y, 32);
-    memcpy(resp + 128, S, 32);
+    uint8_t resp[32];
+    unlink_poseidon_test(resp, (int) g_nrounds);   // DEBUG: g_nrounds rounds
     return io_send_response_pointer(resp, sizeof(resp), SWO_SUCCESS);
 }
 
@@ -56,6 +51,7 @@ int handler_get_public_key(buffer_t *cdata, bool display) {
     (void) cdata;
     (void) display;
 
+    if (cdata && cdata->size >= 1) g_nrounds = cdata->ptr[0]; else g_nrounds = 68;
     memset(g_msg, 0, sizeof(g_msg));
     g_msg[31] = 42;  // demo message_hash = field element 42
 

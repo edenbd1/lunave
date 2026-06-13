@@ -7,3 +7,6 @@ dist/
 
 # native signer build
 native/host/signer
+native/app/build/
+native/app/bin/
+native/app/debug/

@@ -28,7 +28,7 @@ export async function regOptions() {
 
 export async function regVerify(response: any) {
   if (!challenge) throw new Error("no challenge");
-  const v = await verifyRegistrationResponse({ response, expectedChallenge: challenge, expectedOrigin: origin, expectedRPID: rpID });
+  const v = await verifyRegistrationResponse({ response, expectedChallenge: challenge, expectedOrigin: origin, expectedRPID: rpID, requireUserVerification: false });
   if (!v.verified || !v.registrationInfo) throw new Error("registration failed");
   const { credential: c } = v.registrationInfo as any;
   credential = { id: c.id, publicKey: c.publicKey as Uint8Array, counter: c.counter };
@@ -51,6 +51,7 @@ export async function authVerify(response: any) {
   if (!credential || !challenge) throw new Error("no pending tap");
   const v = await verifyAuthenticationResponse({
     response, expectedChallenge: challenge, expectedOrigin: origin, expectedRPID: rpID,
+    requireUserVerification: false,
     credential: { id: credential.id, publicKey: credential.publicKey as any, counter: credential.counter },
   });
   challenge = null;

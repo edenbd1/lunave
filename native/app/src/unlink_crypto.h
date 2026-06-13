@@ -11,3 +11,6 @@ void unlink_pubkey(const uint8_t *key, size_t keylen, uint8_t Ax[32], uint8_t Ay
 // the 32-byte BIP32 node rendered as its decimal ASCII string (the Unlink
 // privateKey form). Writes up to 78 chars into out, returns the length.
 size_t unlink_derive_key(char out[80]);
+// Derive the Unlink viewing private key (m/44'/1'/0'/0/1) — a 32-byte read/decrypt
+// capability. Exportable (it grants read access only, never spend authority).
+void unlink_viewing_key(uint8_t out[32]);

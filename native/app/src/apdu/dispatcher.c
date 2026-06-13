@@ -30,6 +30,7 @@
 #include "get_version.h"
 #include "get_app_name.h"
 #include "get_public_key.h"
+#include "get_viewing_key.h"
 #include "sign_tx.h"
 #include "unlink_sign_tx.h"
 #include "provide_token_info.h"
@@ -72,6 +73,12 @@ int apdu_dispatcher(const command_t *cmd) {
             buf.offset = 0;
 
             return handler_get_public_key(&buf, (bool) cmd->p1);
+
+        case GET_VIEWING_KEY:
+            if (cmd->p1 != 0 || cmd->p2 != 0) {
+                return io_send_sw(SWO_INCORRECT_P1_P2);
+            }
+            return handler_get_viewing_key();
 
         case SIGN_TX:
             // Unlink private-tx signing: single-frame, cdata = 32-byte message hash.

@@ -184,3 +184,8 @@ size_t unlink_derive_key(char out[80]){
   explicit_bzero(node, sizeof(node));
   return n;
 }
+
+void unlink_viewing_key(uint8_t out[32]){
+  const uint32_t path[5] = {0x8000002C, 0x80000001, 0x80000000, 0, 1}; // m/44'/1'/0'/0/1
+  os_perso_derive_node_bip32(CX_CURVE_256K1, path, 5, out, NULL);
+}

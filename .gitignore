@@ -4,3 +4,6 @@ dist/
 *.gpg
 *.log
 .DS_Store
+
+# native signer build
+native/host/signer

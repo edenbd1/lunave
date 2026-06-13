@@ -49,6 +49,25 @@ export async function buildDeviceAccount() {
   };
 }
 
+// Ask the device to display the transfer (amount + recipient) and wait for a
+// physical approval — BEFORE the tx is prepared, so the tap is outside the
+// engine's prepare->submit window. Resolves true on approval, false on rejection.
+export async function reviewIntentOnDevice(amount, recipient) {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const execFileP = promisify(execFile);
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const payload = Buffer.concat([Buffer.from(amount, "utf8"), Buffer.from([0]), Buffer.from(recipient, "utf8")]);
+  // e0 09 00 00 <Lc> <payload>
+  const apduHex = "e0090000" + payload.length.toString(16).padStart(2, "0") + payload.toString("hex");
+  const { stdout } = await execFileP("python3", [join(HERE, "..", "tools", "apdu.py"), apduHex, "120"]);
+  const m = stdout.match(/RESP\s+([0-9a-fA-F]+)/);
+  if (!m) throw new Error(`device: no review response (${stdout.trim()})`);
+  return m[1].slice(-4) === "9000";
+}
+
 // Read the viewing private key (32 bytes) from the device (INS 0x08).
 export async function getDeviceViewingPrivateKey() {
   const { execFile } = await import("node:child_process");

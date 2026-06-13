@@ -8,7 +8,7 @@ import { createUnlinkClient, evm, account as sdkAccount } from "@unlink-xyz/sdk/
 import { createWalletClient, createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
-import { buildDeviceAccount } from "./device-account.mjs";
+import { buildDeviceAccount, reviewIntentOnDevice } from "./device-account.mjs";
 
 const ENVIRONMENT = process.env.UNLINK_ENVIRONMENT || "base-sepolia";
 const API_KEY = process.env.UNLINK_API_KEY || "";
@@ -94,6 +94,13 @@ acct.signSigningRequest = async (req) => {
   }
   return res;
 };
+
+const human = (Number(XFER) / 1e6).toFixed(2) + " USDC";
+const shortRecip = recipientAddress.slice(0, 12) + "…" + recipientAddress.slice(-6);
+log(`→ approve the transfer on the device: ${human} → ${shortRecip} (tap to confirm)…`);
+const approved = await reviewIntentOnDevice(human, shortRecip);
+if (!approved) { log("  rejected on device — aborting."); process.exit(1); }
+log("  approved on device ✔");
 
 log(`→ private transfer ${XFER} to the recipient, signed on the device…`);
 try {

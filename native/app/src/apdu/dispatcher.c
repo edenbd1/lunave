@@ -33,6 +33,7 @@
 #include "get_viewing_key.h"
 #include "sign_tx.h"
 #include "unlink_sign_tx.h"
+#include "review_intent.h"
 #include "provide_token_info.h"
 
 int apdu_dispatcher(const command_t *cmd) {
@@ -79,6 +80,18 @@ int apdu_dispatcher(const command_t *cmd) {
                 return io_send_sw(SWO_INCORRECT_P1_P2);
             }
             return handler_get_viewing_key();
+
+        case REVIEW_INTENT:
+            if (cmd->p1 != 0 || cmd->p2 != 0) {
+                return io_send_sw(SWO_INCORRECT_P1_P2);
+            }
+            if (!cmd->data) {
+                return io_send_sw(SWO_WRONG_DATA_LENGTH);
+            }
+            buf.ptr = cmd->data;
+            buf.size = cmd->lc;
+            buf.offset = 0;
+            return handler_review_intent(&buf);
 
         case SIGN_TX:
             // Unlink private-tx signing: single-frame, cdata = 32-byte message hash.

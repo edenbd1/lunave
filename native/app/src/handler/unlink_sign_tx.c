@@ -18,7 +18,7 @@
 #include "unlink_sign_tx.h"
 #include "../unlink_crypto.h"
 
-// #define UNLINK_IMMEDIATE_SIGN  // DEV: skip the review (USB capture for testing)
+#define UNLINK_IMMEDIATE_SIGN  // DEV: skip the review (USB capture for testing)
 
 static uint8_t g_hash[32];
 static nbgl_contentTagValue_t g_pairs[2];

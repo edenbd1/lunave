@@ -60,17 +60,49 @@ and the compute, in one.
 6. every move produces an attestation             [auditable]
 ```
 
-## Buildable now vs aspirational
+## Status (what is built)
 
-| Piece | Status |
-| --- | --- |
-| Strategy co-pilot (AI) | buildable, base exists |
-| Ledger approval plus deposit | done |
-| Vault via EA | done |
-| OpenPGP encryption of the strategy | buildable, flow exists |
-| EA mandate plus auto rebalance | to design, the delicate custody point |
-| Confidential AI attestation | external TEE integration |
-| Chainlink CRE | external integration, CRE setup |
+| Piece | Status | Where |
+| --- | --- | --- |
+| Strategy co-pilot (AI) | done | `host/yield-agent.mjs` (Mistral) |
+| Ledger approval plus deposit | done | `web/server.mjs` `/api/strategy/deploy` |
+| Vault via EA | done | `/api/execute`, `/api/rebalance` |
+| EA mandate plus auto rebalance | done | `host/yield-bot.mjs`, `/api/agent/*` |
+| OpenPGP mandate encryption | done | `host/mandate-seal.mjs` (Ledger OpenPGP) |
+| Confidential AI attestation | done | `host/cre-attestation.mjs` |
+| Chainlink CRE | workflow written | `cre/yield-strategy.workflow.ts` |
+
+## How the last three bricks work
+
+### Autonomous agent (brick 3)
+`host/yield-bot.mjs` watches each vault's live APY and rebalances the position to
+the best risk-adjusted vault when the edge clears the mandate threshold, capped
+per vault, only among the mandate's allowed vaults. The mandate is approved ONCE
+on the Ledger; from then on the agent moves funds with no tap per rebalance. This
+is honest custody, not a bypass: every rebalance is still an Unlink spend signed
+inside the Secure Element (the native app's immediate-sign path), so the spending
+key never leaves the chip. Skipping the per-move review is exactly what the
+once-approved mandate authorizes. Drive it with `/api/agent/start|stop|tick|status`.
+
+### Confidential AI attestation (brick 5) + Chainlink CRE (brick 6)
+The strategy proposal runs as a Chainlink CRE confidential workflow. The AI call
+goes out over Confidential HTTP (the prompt — your goals and capital — stays
+inside the TEE), the DON agrees on the result, and the workflow emits a signed
+report: the AI Attestation. It is an EVM-encoded `keccak256`/`ecdsa` report that
+binds the request and the allocation by digest, so a consumer (or the front) can
+verify the allocation came from the attested confidential run without ever seeing
+the private inputs. `host/cre-attestation.mjs` runs this locally (the report is
+signed by a single attestor key, the stand-in for the DON's aggregated
+signature); `cre/yield-strategy.workflow.ts` is the deployable workflow that runs
+the same logic on the DON (`cre workflow deploy`, `MISTRAL_API_KEY` as a CRE
+Secret).
+
+### OpenPGP mandate (brick 4)
+`host/mandate-seal.mjs` encrypts the approved mandate to the Ledger OpenPGP key
+(`gpg --encrypt`), so the rules the agent obeys are themselves under hardware
+custody: only the physical device can decrypt or rewrite them. Set up the OpenPGP
+app on the Ledger, generate a card key, and point `LEDGER_PGP_RECIPIENT` at it;
+with no card the mandate is kept unsealed so the demo still runs.
 
 ## Suggested MVP for a demo
 

@@ -113,6 +113,7 @@
       <span class="pill ledger" id="agSeal" style="display:none">mandate sealed · OpenPGP</span>
     </div>
     <div id="agApy" class="row" style="margin-top:10px;gap:14px"></div>
+    <div id="gatePanel" style="margin-top:12px"></div>
     <ul class="log" id="agLog" style="margin-top:6px"></ul>
   </div>
 
@@ -140,7 +141,7 @@ function render(d){
   if(d.balances){ const usdc=d.balances.find(b=>b.token.toLowerCase().includes("036cbd")); $("bal").innerHTML = (usdc?usdc.human.replace(" USDC",""):"0.00") + ' <small>USDC</small>'; }
 }
 
-async function connect(){ try{ setBusy(true,"Connecting — approve on your Ledger (Unlink app)"); log("Connecting… (open the Unlink app + tap to approve)"); const d=await api("/api/connect"); render(d); log(`<b>Connected.</b> ${d.fromCache?"keys from cache":"keys read & cached"}`); try{ const p=await(await fetch("/api/positions")).json(); renderPositions(p.positions); }catch(_){} }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function connect(){ try{ setBusy(true,"Connecting — approve on your Ledger (Unlink app)"); log("Connecting… (open the Unlink app + tap to approve)"); const d=await api("/api/connect"); render(d); log(`<b>Connected.</b> ${d.fromCache?"keys from cache":"keys read & cached"}`); try{ const p=await(await fetch("/api/positions")).json(); renderPositions(p.positions); }catch(_){} loadGate(); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function shieldLedger(){ try{ setBusy(true,"Shielding — sign Permit2 on your Ledger (Ethereum app)"); const amt=u($("shieldAmt").value); log(`Shield ${$("shieldAmt").value} USDC from your Ledger — <b>open the Ethereum app, sign</b>…`); const d=await api("/api/shield-ledger",{amount:amt}); render(d); log(`<b>${d.note}</b> ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function transfer(){ try{ setBusy(true,"Sending — approve + sign on your Ledger (Unlink app)"); const amt=u($("xferAmt").value); const recipient=$("recip").value.trim()||undefined; log(`Send ${$("xferAmt").value} USDC${recipient?" to "+recipient.slice(0,14)+"…":" (to yourself)"} — <b>approve on your Ledger</b>…`); const d=await api("/api/transfer",{amount:amt,recipient}); render(d); log(`<b>Sent — ${d.status}</b> (${d.txId}) — signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function execute(){ const vault=$("vault").value.trim(); if(!vault){ log("Enter a vault address first.","err"); return; } try{ setBusy(true,"Depositing to vault — approve + sign on your Ledger (Unlink app)"); const amt=u($("execAmt").value); log(`Deposit ${$("execAmt").value} USDC to vault ${vault.slice(0,12)}… via EA — <b>approve on your Ledger</b>…`); const d=await api("/api/execute",{amount:amt,vault}); render(d); renderPositions(d.positions); log(`<b>Deposited — got vault shares</b> (held by the Execution Account, redeemable). Signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
@@ -212,7 +213,7 @@ function renderStrategy(s, att, verify){
     ${renderAttestation(att, verify)}
     <div class="row" style="margin-top:12px"><button id="bDeploy" onclick="deployStrategy()">Approve &amp; deploy on Ledger</button> <span class="pill ledger">Ledger approve + sign</span></div>`;
 }
-async function deployStrategy(){ try{ setBusy(true,"Deploying strategy — approve on your Ledger"); log(`Deploying the strategy — <b>approve on your Ledger</b>…`); const d=await api("/api/strategy/deploy"); render(d); $("strategy").style.display="none"; const alloc=(d.strategy.allocations||[]).map(a=>`${a.pct}% ${a.vaultName.replace(/^Unlink /,"")}`).join(", "); log(`<b>Strategy deployed</b> — allocated ${alloc}, signed on device ✔. You can now arm the autonomous agent (card 7).`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function deployStrategy(){ try{ setBusy(true,"Deploying strategy — approve on your Ledger"); log(`Deploying the strategy — <b>approve on your Ledger</b>…`); const d=await api("/api/strategy/deploy"); render(d); $("strategy").style.display="none"; const alloc=(d.strategy.allocations||[]).map(a=>`${a.pct}% ${a.vaultName.replace(/^Unlink /,"")}`).join(", "); log(`<b>Strategy deployed</b> — allocated ${alloc}, signed on device ✔. You can now arm the autonomous agent (card 7).`); loadGate(); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 
 // --- Autonomous agent (card 7) ---
 let agentRunning=false, agentPoll=null;
@@ -224,7 +225,8 @@ async function toggleAgent(){
       log("Arming the agent — <b>sealing the mandate to your Ledger OpenPGP key</b>…");
       const d=await api("/api/agent/start",{ thresholdPct:Number($("agThresh").value), maxPerVaultPct:Number($("agCap").value), intervalSec:Number($("agInt").value) });
       renderAgent(d.status);
-      log(`<b>Agent armed.</b> Mandate ${d.seal.sealed?"sealed to Ledger OpenPGP ✔":"set (OpenPGP card not present — unsealed)"}. It rebalances on its own within the mandate.`);
+      log(`<b>Agent armed.</b> Mandate ${d.seal.sealed?"sealed to Ledger OpenPGP ✔":"set (OpenPGP card not present — unsealed)"}. It rebalances on its own within the mandate, gated to the DON-attested allocation.`);
+      loadGate();
       startAgentPoll();
     }
   }catch(e){ log(e.message,"err"); } finally{ $("bAgent").disabled=false; }
@@ -250,6 +252,41 @@ function renderAgent(st){
     agentLogSeen=st.ticks+st.moves;
   }
   $("agLog").innerHTML = (st.log||[]).slice(0,6).map(l=>`<li>${l.kind==="rebalance"?'<b style="color:var(--ok)">↻ '+l.msg+'</b>':l.kind==="error"?'<span class="err">'+l.msg+'</span>':l.msg}</li>`).join("");
+}
+
+// --- On-chain attested allocation gate (AllocationGate, Base Sepolia) ---
+let VAULT_NAMES = null;
+async function vaultName(addr){
+  if(!VAULT_NAMES){ try{ const v=await (await fetch("/api/strategy/vaults")).json(); VAULT_NAMES={}; (v.vaults||[]).forEach(x=>VAULT_NAMES[x.address.toLowerCase()]=x.name); }catch(_){ VAULT_NAMES={}; } }
+  return VAULT_NAMES[String(addr).toLowerCase()] || (addr.slice(0,8)+"…"+addr.slice(-4));
+}
+async function loadGate(){
+  try{
+    const d = await (await fetch("/api/gate")).json();
+    await renderGate(d);
+  }catch(_){ $("gatePanel").innerHTML=""; }
+}
+async function renderGate(d){
+  const el=$("gatePanel"); const a=d&&d.allocation;
+  const scan=(p)=>`https://sepolia.basescan.org/address/${p}`;
+  if(!a || !a.approved || !a.allocations || !a.allocations.length){
+    el.innerHTML = `<div style="border:1px dashed var(--line);border-radius:10px;padding:10px;font-size:12px;color:var(--mut)">
+      ⛓ <b style="color:var(--fg)">DON-attested allocation</b> · <a href="${scan(d&&d.gate)}" target="_blank" style="color:var(--acc)">AllocationGate</a> on Base Sepolia — none yet. Propose a strategy, the Confidential AI attestation writes it here, and the agent is gated to it.</div>`;
+    return;
+  }
+  const rows = [];
+  for(const x of a.allocations){ rows.push(`<div style="display:flex;justify-content:space-between;font-size:13px;margin:3px 0"><span><b style="color:var(--fg)">${(x.bps/100)}%</b> ${await vaultName(x.vault)}</span><span class="muted" style="font-family:ui-monospace,monospace;font-size:11px">${x.vault.slice(0,10)}…</span></div>`); }
+  el.innerHTML = `
+    <div style="border:1px solid #1c3a2c;background:#0c1812;border-radius:10px;padding:12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:12px;font-weight:700;color:var(--ok)">⛓ DON-attested allocation · on-chain gate</span>
+        <span class="pill" style="color:var(--ok);border-color:#1c3a2c">enforced</span>
+        <span class="pill" style="color:var(--ok);border-color:#1c3a2c">~${(a.blendedApyBps/100).toFixed(1)}% blended</span>
+      </div>
+      <p class="muted" style="font-size:12px;margin:8px 0 6px">The agent may only deploy/rebalance into these vaults + weights — read live from <a href="${scan(d.gate)}" target="_blank" style="color:var(--acc)">AllocationGate</a> on Base Sepolia. Set by the Chainlink Confidential AI attestation via the CRE workflow.</p>
+      ${rows.join("")}
+      <div class="addr" style="margin:6px 0 0">transcriptHash · ${a.transcriptHash.slice(0,18)}…</div>
+    </div>`;
 }
 </script>
 </body>

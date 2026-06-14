@@ -54,13 +54,20 @@ function reportFromCallback() {
 async function main() {
   console.log(`Deployer / forwarder: ${account.address}`);
 
-  // 1. Deploy AllocationGate(forwarder = funding wallet)
-  console.log("\n[1] Deploying AllocationGate...");
-  const deployHash = await wallet.deployContract({ abi, bytecode, args: [account.address] });
-  console.log(`    deploy tx: ${scan(deployHash)}`);
-  const rc = await pub.waitForTransactionReceipt({ hash: deployHash });
-  const gate = rc.contractAddress;
-  console.log(`    ✓ AllocationGate @ ${gate}`);
+  // 1. Deploy AllocationGate(forwarder = funding wallet), or reuse an existing
+  //    one via ALLOCATION_GATE (to re-attest without redeploying).
+  let gate = process.env.ALLOCATION_GATE;
+  if (gate) {
+    gate = getAddress(gate);
+    console.log(`\n[1] Reusing AllocationGate @ ${gate} (ALLOCATION_GATE set)`);
+  } else {
+    console.log("\n[1] Deploying AllocationGate...");
+    const deployHash = await wallet.deployContract({ abi, bytecode, args: [account.address] });
+    console.log(`    deploy tx: ${scan(deployHash)}`);
+    const rc = await pub.waitForTransactionReceipt({ hash: deployHash });
+    gate = rc.contractAddress;
+    console.log(`    ✓ AllocationGate @ ${gate}`);
+  }
 
   // 2. Build the report exactly as the CRE workflow does, from the real inference
   const r = reportFromCallback();

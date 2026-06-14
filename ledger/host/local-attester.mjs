@@ -59,6 +59,28 @@ function fallbackAllocation(prompt) {
   };
 }
 
+// Find a vault's "~X%" APY in the prompt so we can recompute the blended APY
+// from the weights (LLMs are unreliable at expressing basis points).
+function apyForVault(prompt, addr) {
+  const esc = String(addr).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = String(prompt).match(new RegExp(esc + "[^~]*~\\s*([0-9.]+)\\s*%", "i"));
+  return m ? Number(m[1]) : null;
+}
+
+// Recompute blended_apy_bps = Σ (bps/10000 · vaultApy) · 100, when the vault APYs
+// are present in the prompt. Keeps the on-chain attested number honest.
+function fixBlended(decision, prompt) {
+  const allocs = decision.allocations || [];
+  let acc = 0;
+  for (const a of allocs) {
+    const apy = apyForVault(prompt, a.vault);
+    if (apy == null) return decision; // can't recompute reliably — leave as-is
+    acc += (Number(a.bps) / 10000) * apy;
+  }
+  decision.blended_apy_bps = Math.round(acc * 100);
+  return decision;
+}
+
 // Run one inference and fill in the job's terminal status.
 async function runJob(id, body) {
   const job = jobs.get(id);
@@ -67,6 +89,8 @@ async function runJob(id, body) {
     let jsonText = null;
     try { jsonText = await askMistral(body.system_prompt || "", body.prompt || ""); } catch { /* fall back */ }
     if (!jsonText) jsonText = JSON.stringify(fallbackAllocation(body.prompt || ""));
+    // Normalize the blended APY from the weights (don't trust the LLM's bps).
+    try { jsonText = JSON.stringify(fixBlended(JSON.parse(jsonText), body.prompt || "")); } catch { /* keep raw */ }
 
     // Faithful to the real attester: the answer is a ```json-fenced string.
     const output = "```json\n" + jsonText.trim() + "\n```";

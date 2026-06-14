@@ -139,15 +139,14 @@ app.get("/api/status", async (c) =>
 app.get("/api/portfolio", async (c) => {
   if (!S) return c.json({ error: "not connected" }, 400);
   const ethAddress = ETH_ADDR || LEDGER_ETH;
-  let publicEth = "0", publicUsdc = "0";
-  try {
-    const [e, u] = await Promise.all([
-      readClient.getBalance({ address: getAddress(ethAddress) }),
-      readClient.readContract({ address: getAddress(USDC), abi: ERC20_BALANCE_OF, functionName: "balanceOf", args: [getAddress(ethAddress)] }).catch(() => 0n),
-    ]);
-    publicEth = formatEther(e); publicUsdc = (Number(u) / 1e6).toFixed(2);
-  } catch { /* RPC hiccup */ }
-  const bal = (await balanceList()).find((b) => b.token.toLowerCase().includes("036cbd"));
+  // Public RPC reads + the private balance all in parallel (don't block each other).
+  const [e, u, balances] = await Promise.all([
+    readClient.getBalance({ address: getAddress(ethAddress) }).catch(() => 0n),
+    readClient.readContract({ address: getAddress(USDC), abi: ERC20_BALANCE_OF, functionName: "balanceOf", args: [getAddress(ethAddress)] }).catch(() => 0n),
+    balanceList().catch(() => []),
+  ]);
+  const publicEth = formatEther(e), publicUsdc = (Number(u) / 1e6).toFixed(2);
+  const bal = balances.find((b) => b.token.toLowerCase().includes("036cbd"));
   const positions = POSITIONS.map((p) => {
     const v = VAULTS.find((vv) => vv.address.toLowerCase() === String(p.vault || "").toLowerCase());
     return { id: p.id, vault: p.vault, vaultName: p.vaultName, protocol: v?.protocol || null, apy: p.apy ?? v?.apy ?? null, accountIndex: p.accountIndex, usdc: (Number(p.shares) / 1e6).toFixed(2) };

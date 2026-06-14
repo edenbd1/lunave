@@ -14,7 +14,7 @@ import { createUnlinkClient, evm } from "@unlink-xyz/sdk/client";
 import { createWalletClient, createPublicClient, http, encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
-import { buildDeviceAccount, reviewIntentOnDevice } from "../host/device-account.mjs";
+import { buildDeviceAccount, reviewIntentOnDevice, connectApproveOnDevice } from "../host/device-account.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENV = process.env.UNLINK_ENVIRONMENT || "base-sepolia";
@@ -50,6 +50,9 @@ app.get("/", (c) => c.html(readFileSync(join(HERE, "index.html"), "utf8")));
 app.post("/api/connect", async (c) => {
   if (!API_KEY) return c.json({ error: "UNLINK_API_KEY missing (run with --env-file=.env)" }, 400);
   try {
+    // pairing approval on the device (open the Unlink app + tap)
+    const approved = await connectApproveOnDevice();
+    if (!approved) return c.json({ error: "connection rejected on device" }, 400);
     const account = await buildDeviceAccount();
     const admin = createUnlinkAdmin({ environment: ENV, apiKey: API_KEY });
     await admin.users.register(await account.getRegistrationPayload());
@@ -72,8 +75,10 @@ app.post("/api/deposit", async (c) => {
   if (!S) return c.json({ error: "not connected" }, 400);
   const { amount = "1000000" } = await c.req.json().catch(() => ({}));
   try {
+    const approved = await reviewIntentOnDevice(human(amount), "shield into pool");
+    if (!approved) return c.json({ error: "deposit rejected on device" }, 400);
     await S.client.depositWithApproval({ token: USDC, amount });
-    return c.json({ ok: true, note: `deposited ${human(amount)} into the pool (EVM-funded)`, balances: await balanceList() });
+    return c.json({ ok: true, note: `shielded ${human(amount)} into the pool`, balances: await balanceList() });
   } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
 });
 

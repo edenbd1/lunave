@@ -19,6 +19,7 @@ typedef enum {
     SIGN_TOKEN_TX = 0x07,      /// sign token transaction with BIP32 path and token address
     GET_VIEWING_KEY = 0x08,    /// Unlink viewing private key (read capability)
     REVIEW_INTENT = 0x09,      /// on-device approval of a transfer intent (pre-prepare)
+    CONNECT = 0x0A,            /// on-device pairing approval when a host connects
     PROVIDE_TOKEN_INFO = 0x22  /// provide dynamic token info via CAL TLV descriptor
 } command_e;
 /**

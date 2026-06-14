@@ -51,8 +51,8 @@
     <div class="bal" id="bal">— <small>USDC</small></div>
     <div class="row" style="margin-top:12px">
       <input id="depAmt" value="1" /> <span class="muted">USDC</span>
-      <button class="ghost" id="bDeposit" onclick="deposit()" disabled>Deposit into pool</button>
-      <span class="pill">EVM-funded · no Ledger tap</span>
+      <button class="ghost" id="bDeposit" onclick="deposit()" disabled>Shield into pool</button>
+      <span class="pill ledger">Ledger approve</span>
     </div>
   </div>
 
@@ -91,7 +91,7 @@ function render(d){
 }
 
 async function connect(){ try{ setBusy(true); log("Connecting… (first time opens the Ledger app to read keys)"); const d=await api("/api/connect"); render(d); log(`<b>Connected.</b> ${d.fromCache?"keys from cache — device not touched":"keys read & cached"}`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
-async function deposit(){ try{ setBusy(true); const amt=u($("depAmt").value); log(`Depositing ${$("depAmt").value} USDC into the pool…`); const d=await api("/api/deposit",{amount:amt}); render(d); log(`<b>${d.note}</b>`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function deposit(){ try{ setBusy(true); const amt=u($("depAmt").value); log(`Shield ${$("depAmt").value} USDC — <b>approve on your Ledger</b>…`); const d=await api("/api/deposit",{amount:amt}); render(d); log(`<b>${d.note}</b> ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function transfer(){ try{ setBusy(true); const amt=u($("xferAmt").value); log(`Transfer ${$("xferAmt").value} USDC — <b>approve on your Ledger</b>…`); const d=await api("/api/transfer",{amount:amt}); render(d); log(`<b>Transfer ${d.status}</b> (${d.txId}) — signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function execute(){ try{ setBusy(true); const amt=u($("execAmt").value); log(`Pool → DeFi via EA, ${$("execAmt").value} USDC — <b>approve on your Ledger</b>…`); const d=await api("/api/execute",{amount:amt}); render(d); log(`<b>Executed via EA</b> — signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 </script>

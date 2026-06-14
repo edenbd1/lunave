@@ -248,6 +248,11 @@ app.post("/api/execute", async (c) => {
   const known = VAULTS.find((v) => v.address.toLowerCase() === String(vault).toLowerCase());
   const vaultName = known?.name || body.vaultName || "vault";
   if (!vault) return c.json({ error: "vault address required" }, 400);
+  // Pre-check the private pool balance so the user doesn't sign then fail.
+  const usdcBal = (await balanceList()).find((b) => b.token.toLowerCase().includes("036cbd"));
+  if (BigInt(usdcBal?.amount || "0") < BigInt(amount)) {
+    return c.json({ error: `Insufficient private balance — you have ${human(usdcBal?.amount || "0")} in the pool, need ${human(amount)}. Shield more (card 3) or lower the amount.` }, 400);
+  }
   const calls = [
     { target: USDC, value: "0", data: encodeFunctionData({ abi: ERC20_APPROVE, functionName: "approve", args: [vault, BigInt(amount)] }) },
     { target: vault, value: "0", data: encodeFunctionData({ abi: ERC4626_DEPOSIT_SELF, functionName: "depositSelf", args: [BigInt(amount)] }) },

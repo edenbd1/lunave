@@ -5,16 +5,17 @@ apdu=bytes.fromhex(sys.argv[1]); tmo=int(sys.argv[2]) if len(sys.argv)>2 else 12
 # Pick the Ledger APDU HID interface (usage_page 0xffa0); fall back to any Ledger
 # interface. Don't crash with IndexError when the device isn't presenting it
 # (locked, mid app-switch, or no app open).
-devs=hid.enumerate(0x2c97,0)
-cands=[d for d in devs if d.get('usage_page',0)==0xffa0] or [d for d in devs if d.get('path')]
-if not cands:
+dev=None
+for _attempt in range(16):  # retry ~8s: after an app switch (OpenPGP -> Unlink)
+    devs=hid.enumerate(0x2c97,0)  # the device re-enumerates and is briefly absent
+    cands=[d for d in devs if d.get('usage_page',0)==0xffa0] or [d for d in devs if d.get('path')]
+    for d in cands:
+        try: dev=hid.device(); dev.open_path(d['path']); break
+        except Exception: dev=None; continue
+    if dev: break
+    time.sleep(0.5)
+if not dev:
     print("NO_DEVICE (no Ledger HID interface — unlock the device and open the right app)"); sys.exit(0)
-dev=hid.device(); opened=False
-for d in cands:
-    try: dev.open_path(d['path']); opened=True; break
-    except Exception: continue
-if not opened:
-    print("NO_DEVICE (could not open the Ledger — is the right app open?)"); sys.exit(0)
 def rd(ms):
     try: return bytes(dev.read(64, ms))
     except Exception: return b""

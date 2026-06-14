@@ -127,13 +127,16 @@ export async function connectApproveOnDevice() {
 // a physical approval, BEFORE the tx is prepared (so the tap is outside the
 // engine's prepare->submit window). Resolves true on approval, false on reject.
 export async function reviewPairsOnDevice(pairs) {
+  // Truncate each field so it reads on the small device screen and the whole
+  // payload stays within the single-byte APDU length (Lc <= 255).
+  const trunc = (s, n) => { s = String(s); return s.length > n ? s.slice(0, n - 1) + "." : s; };
   const parts = [];
   for (const [label, value] of pairs.slice(0, 4)) {
-    parts.push(Buffer.from(String(label), "utf8"), Buffer.from([0]),
-               Buffer.from(String(value), "utf8"), Buffer.from([0]));
+    parts.push(Buffer.from(trunc(label, 16), "utf8"), Buffer.from([0]),
+               Buffer.from(trunc(value, 44), "utf8"), Buffer.from([0]));
   }
-  const joined = Buffer.concat(parts);
-  const payload = joined.subarray(0, joined.length - 1); // drop the trailing NUL
+  let payload = Buffer.concat(parts).subarray(0, -1); // drop the trailing NUL
+  if (payload.length > 255) payload = payload.subarray(0, 255);
   const apduHex = "e0090000" + payload.length.toString(16).padStart(2, "0") + payload.toString("hex");
   return (await sendApduSW(apduHex, 120)) === "9000";
 }

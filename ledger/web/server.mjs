@@ -490,10 +490,10 @@ app.post("/api/strategy/deploy", async (c) => {
   const allocStr = s.allocations.map((a) => `${a.pct}% ${a.vaultName.replace(/^Unlink /, "")}`).join(", ");
   try {
     const approved = await reviewPairsOnDevice([
-      ["Strategy", s.summary],
+      ["Strategy", `${s.riskLevel} risk · ~${s.blendedApy}% APY`],
       ["Deploy", human(total.toString())],
       ["Allocation", allocStr],
-      ["Rebalance", `${s.rebalance.frequency}: ${s.rebalance.trigger}`],
+      ["Rebalance", "autonomous, within mandate"],
     ]);
     if (!approved) return c.json({ error: "strategy rejected on device" }, 400);
     const res = await S.client.execute({ token: USDC, amount: total.toString(), calls });

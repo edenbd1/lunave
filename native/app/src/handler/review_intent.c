@@ -17,7 +17,7 @@
 #include "review_intent.h"
 
 static char g_amount[40];
-static char g_recipient[96];
+static char g_recipient[128];   // full bech32m unlink1… address (~115 chars)
 static nbgl_contentTagValue_t g_pairs[2];
 static nbgl_contentTagValueList_t g_pairList;
 

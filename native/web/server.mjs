@@ -118,7 +118,7 @@ app.post("/api/transfer", async (c) => {
   const { amount = "100000", recipient } = await c.req.json().catch(() => ({}));
   try {
     const to = recipient || S.address; // default self
-    const approved = await reviewIntentOnDevice(human(amount), shortAddr(to));
+    const approved = await reviewIntentOnDevice(human(amount), to); // FULL address on device
     if (!approved) return c.json({ error: "rejected on device" }, 400);
     const h = await S.client.transfer({ recipientAddress: to, amount, token: USDC });
     return c.json({ ok: true, txId: h.txId, status: h.status, balances: await balanceList() });

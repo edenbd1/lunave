@@ -25,3 +25,6 @@ ledger/cre/yield-allocation-workflow/dist/
 ledger/cre/out/
 ledger/cre/cache/
 ledger/cre/.env
+
+# CRE build temp
+ledger/cre/yield-allocation-workflow/.cre_build_tmp.js

@@ -243,7 +243,10 @@ app.post("/api/execute", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const amount = body.amount || "100000";
   const vault = body.vault || DEMO_VAULT;
-  const vaultName = body.vaultName || "Unlink Demo Vault";
+  // Resolve the real market name from the address so the device shows e.g.
+  // "Aave USDC" (the front only sends the address).
+  const known = VAULTS.find((v) => v.address.toLowerCase() === String(vault).toLowerCase());
+  const vaultName = known?.name || body.vaultName || "vault";
   if (!vault) return c.json({ error: "vault address required" }, 400);
   const calls = [
     { target: USDC, value: "0", data: encodeFunctionData({ abi: ERC20_APPROVE, functionName: "approve", args: [vault, BigInt(amount)] }) },
@@ -258,7 +261,6 @@ app.post("/api/execute", async (c) => {
     if (!approved) return c.json({ error: "rejected on device" }, 400);
     const res = await S.client.execute({ token: USDC, amount, calls });
     const accountIndex = res.execution?.account_index;
-    const known = VAULTS.find((v) => v.address.toLowerCase() === vault.toLowerCase());
     const pos = { id: String(Date.now()), vault, vaultName: known?.name || vaultName, apy: known?.apy, accountIndex, shares: amount };
     POSITIONS.push(pos);
     return c.json({ ok: true, result: res, position: pos, positions: POSITIONS, balances: await balanceList() });

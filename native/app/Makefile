@@ -25,7 +25,7 @@ include $(BOLOS_SDK)/Makefile.target
 #        Mandatory configuration       #
 ########################################
 # Application name
-APPNAME = "UnlinkSB"
+APPNAME = "Unlink"
 
 # Application version
 APPVERSION_M = 2

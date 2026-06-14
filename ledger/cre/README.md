@@ -29,6 +29,26 @@ Execution Account  only deploys / rebalances WITHIN the attested vaults + weight
 Everything is on **Base Sepolia** (`ethereum-testnet-sepolia-base-1`, chainId 84532)
 — the same chain as the Unlink vaults and the Execution Account.
 
+## Deployed (Base Sepolia, chainId 84532)
+
+| What | Address / tx |
+| --- | --- |
+| **AllocationGate** | [`0xaf73bc5f7e53f58502443af04756e175278ffcf1`](https://sepolia.basescan.org/address/0xaf73bc5f7e53f58502443af04756e175278ffcf1) |
+| deploy tx | [`0xb355ef03…`](https://sepolia.basescan.org/tx/0xb355ef0302445df569351a4e311394d1f936c3ba4192da87c11b22d661e5abf6) |
+| onReport tx (attested allocation) | [`0x80a6eb38…`](https://sepolia.basescan.org/tx/0x80a6eb38265b62144c869937ee5383603c85566a96386b387c7c771747b7d69d) |
+
+`scripts/deploy-gate.mjs` deploys the gate and tests it end-to-end: it encodes a
+report EXACTLY as the CRE workflow does, from the real local-attester inference
+output, delivers it via `onReport`, then reads `approvedAllocation` /
+`isApproved` / `getAllocationById` back and asserts they equal the attested
+inference (vaults, weights, blended APY, transcriptHash, inference id). All checks
+pass on-chain. (Deployed with the funding wallet as `forwarder` so the script can
+stand in for the KeystoneForwarder; the live CRE path uses CRE's forwarder.)
+
+```bash
+node --env-file=.env ledger/cre/scripts/deploy-gate.mjs
+```
+
 ## Layout
 
 ```

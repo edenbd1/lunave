@@ -280,30 +280,69 @@ app.post("/api/rebalance", async (c) => {
   } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
 });
 
+// Rebalance the EA's positions to new target shares per vault, in ONE
+// executeAccountCall: redeem the over-weight vaults, then approve + depositSelf
+// the under-weight ones (the redeemed USDC funds the deposits). This MAINTAINS the
+// approved allocation rather than consolidating. The agent calls it silent (no
+// per-move tap) — the SE still signs every spend, so custody holds.
+async function doPortfolioRebalance({ accountIndex, targetShares, silent }) {
+  if (!S) throw new Error("not connected");
+  if (accountIndex == null) throw new Error("no execution account index");
+  const ps = POSITIONS.filter((p) => p.accountIndex === accountIndex && p.vault);
+  const redeems = [], approves = [], deposits = [];
+  for (const ts of targetShares) {
+    const pos = ps.find((p) => p.vault.toLowerCase() === ts.vault.toLowerCase());
+    const cur = pos ? BigInt(pos.shares) : 0n;
+    const tgt = BigInt(ts.shares);
+    if (tgt < cur) redeems.push({ target: ts.vault, value: "0", data: encodeFunctionData({ abi: ERC4626_REDEEM_SELF, functionName: "redeemSelf", args: [cur - tgt] }) });
+    else if (tgt > cur) {
+      approves.push({ target: USDC, value: "0", data: encodeFunctionData({ abi: ERC20_APPROVE, functionName: "approve", args: [ts.vault, tgt - cur] }) });
+      deposits.push({ target: ts.vault, value: "0", data: encodeFunctionData({ abi: ERC4626_DEPOSIT_SELF, functionName: "depositSelf", args: [tgt - cur] }) });
+    }
+  }
+  const calls = [...redeems, ...approves, ...deposits];
+  if (!calls.length) return null;
+  const res = await S.client.executeAccountCall({ accountIndex, calls });
+  for (const ts of targetShares) {
+    const known = VAULTS.find((v) => v.address.toLowerCase() === ts.vault.toLowerCase());
+    let pos = ps.find((p) => p.vault.toLowerCase() === ts.vault.toLowerCase());
+    if (!pos) { pos = { id: String(Date.now()) + Math.round(Math.random() * 1000), vault: ts.vault, vaultName: known?.name || ts.vaultName, apy: known?.apy, accountIndex, shares: ts.shares }; POSITIONS.push(pos); }
+    else { pos.shares = ts.shares; pos.vaultName = known?.name || ts.vaultName; pos.apy = known?.apy ?? pos.apy; }
+  }
+  return res;
+}
+
 // --- Autonomous yield agent (#4) --------------------------------------------
-// Approve a mandate once on the Ledger; the agent then rebalances WITHIN it on
-// its own. Each move is still SE-signed (immediate-sign) so the key never leaves
-// the chip — the agent just doesn't re-prompt for moves inside the mandate.
+// Approve a mandate (the target allocation) once on the Ledger; the agent then
+// MAINTAINS those weights on its own, tilting only within an approved band toward
+// the best risk-adjusted APY, never past the per-vault cap. Each move is still
+// SE-signed (immediate-sign) so the key never leaves the chip.
 const bot = createYieldBot({
   getPositions: () => POSITIONS,
-  rebalance: ({ pos, target }) => doRebalance({ pos, target, silent: true }),
+  rebalancePortfolio: ({ accountIndex, targetShares }) => doPortfolioRebalance({ accountIndex, targetShares, silent: true }),
   log: (m) => console.log(m),
 });
 
 app.post("/api/agent/start", async (c) => {
   if (!S) return c.json({ error: "not connected" }, 400);
   const body = await c.req.json().catch(() => ({}));
-  // The agent rebalances WITHIN the deployed allocation's vaults (the attested
-  // set), not the whole menu — so it stays inside the mandate and the gate.
-  const allowed = LAST_STRATEGY?.allocations?.length
-    ? LAST_STRATEGY.allocations.map((a) => VAULTS.find((v) => v.address.toLowerCase() === a.vault.toLowerCase())).filter(Boolean)
-    : VAULTS;
+  // The mandate's target allocation = the deployed strategy's weights. The agent
+  // maintains them (tilt within the band, capped), never consolidating.
+  let targets = (LAST_STRATEGY?.allocations || []).map((a) => {
+    const v = VAULTS.find((vv) => vv.address.toLowerCase() === a.vault.toLowerCase());
+    return v ? { vault: v.address, vaultName: v.name, apy: v.apy, risk: v.risk, targetBps: Math.round(a.pct * 100) } : null;
+  }).filter(Boolean);
+  if (!targets.length) targets = VAULTS.slice(0, 2).map((v, i) => ({ vault: v.address, vaultName: v.name, apy: v.apy, risk: v.risk, targetBps: i === 0 ? 6000 : 4000 }));
+  const sumB = targets.reduce((s, t) => s + t.targetBps, 0);
+  if (sumB !== 10000) targets[0].targetBps += 10000 - sumB; // normalize to 100%
   const mandate = {
-    allowedVaults: allowed.length ? allowed : VAULTS,
+    targets,
     thresholdPct: Number(body.thresholdPct) || 1.5,
-    maxPerVaultPct: Number(body.maxPerVaultPct) || 80,
+    bandBps: Math.round((Number(body.bandPct) || 15) * 100),       // tilt band ±15% by default
+    maxPerVaultBps: Math.round((Number(body.maxPerVaultPct) || 80) * 100),
+    rebalanceTolBps: Math.round((Number(body.tolPct) || 3) * 100), // act on >3% drift
     riskLevel: LAST_STRATEGY?.riskLevel || "medium",
-    rebalance: LAST_STRATEGY?.rebalance || { trigger: "an APY edge above the threshold", rule: "shift to the best risk-adjusted APY" },
+    rebalance: LAST_STRATEGY?.rebalance || { frequency: "continuous", trigger: "drift from the target weights", rule: "tilt within the band toward the best risk-adjusted APY" },
     approvedAt: Date.now(),
   };
   // Seal the mandate to the Ledger OpenPGP key (only the device can open it).

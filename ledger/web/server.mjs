@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createUnlinkAdmin } from "@unlink-xyz/sdk/admin";
 import { createUnlinkClient, evm } from "@unlink-xyz/sdk/client";
-import { createWalletClient, createPublicClient, http, encodeFunctionData } from "viem";
+import { createWalletClient, createPublicClient, http, encodeFunctionData, getAddress, formatEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { buildDeviceAccount, reviewIntentOnDevice, reviewPairsOnDevice, connectApproveOnDevice } from "../host/device-account.mjs";
@@ -133,6 +133,36 @@ app.post("/api/connect", async (c) => {
 
 app.get("/api/status", async (c) =>
   c.json({ connected: !!S, address: S?.address || null, balances: await balanceList() }));
+
+// Portfolio: the Ledger's assets — public ETH + USDC on its EVM address (Base
+// Sepolia), the private Unlink pool balance, and the vault positions held via EAs.
+app.get("/api/portfolio", async (c) => {
+  if (!S) return c.json({ error: "not connected" }, 400);
+  const ethAddress = ETH_ADDR || LEDGER_ETH;
+  let publicEth = "0", publicUsdc = "0";
+  try {
+    const [e, u] = await Promise.all([
+      readClient.getBalance({ address: getAddress(ethAddress) }),
+      readClient.readContract({ address: getAddress(USDC), abi: ERC20_BALANCE_OF, functionName: "balanceOf", args: [getAddress(ethAddress)] }).catch(() => 0n),
+    ]);
+    publicEth = formatEther(e); publicUsdc = (Number(u) / 1e6).toFixed(2);
+  } catch { /* RPC hiccup */ }
+  const bal = (await balanceList()).find((b) => b.token.toLowerCase().includes("036cbd"));
+  const positions = POSITIONS.map((p) => {
+    const v = VAULTS.find((vv) => vv.address.toLowerCase() === String(p.vault || "").toLowerCase());
+    return { id: p.id, vault: p.vault, vaultName: p.vaultName, protocol: v?.protocol || null, apy: p.apy ?? v?.apy ?? null, accountIndex: p.accountIndex, usdc: (Number(p.shares) / 1e6).toFixed(2) };
+  });
+  const inVaults = positions.filter((p) => p.vault).reduce((s, p) => s + Number(p.usdc), 0);
+  const idle = positions.filter((p) => !p.vault).reduce((s, p) => s + Number(p.usdc), 0);
+  const privatePool = bal ? Number(bal.human.replace(" USDC", "")) : 0;
+  return c.json({
+    unlinkAddress: S.address, ethAddress, chain: "Base Sepolia",
+    public: { eth: Number(publicEth).toFixed(4), usdc: publicUsdc },
+    privatePool: privatePool.toFixed(2),
+    positions,
+    totals: { inVaults: inVaults.toFixed(2), idleInEA: idle.toFixed(2), privateTotal: (privatePool + inVaults + idle).toFixed(2) },
+  });
+});
 
 // Deposit USDC into the private pool. Funded by the EVM wallet (no Unlink spend,
 // so no Ledger signature needed) — credits the device account's private balance.

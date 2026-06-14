@@ -1,0 +1,33 @@
+Initializing...
+Loading settings...
+! Using default private key for chain write simulation. To use your own key, set CRE_ETH_PRIVATE_KEY in your .env file or system environment.
+Checking RPC connectivity...
+Compiling workflow...
+✓ Workflow compiled
+✓ Simulation limits enabled
+  HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite report=50kb gas=10000000 | WASM binary=100mb compressed=20mb
+  Binary hash: fd95276e8d87fa34081cf58de39622a05675eb6ca7cd428172c2e84c2df160d9
+  Config hash: e3191ba65b51c3b9f16c94d17a1c5ed969214c3b55bd41e17e23e0394c3b8f57
+✓ Loaded JSON from file: /Users/eden/data/ny/unlink-ledger-custody/ledger/cre/simulation/allocation-callback.json
+✓ Created HTTP trigger payload with 12 fields
+2026-06-14T02:42:38Z [SIMULATION] Simulator Initialized
+
+2026-06-14T02:42:38Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+2026-06-14T02:42:38Z [USER LOG] Inference callback received: id=01984c7a-1f30-7bb2-9a01-aef39d20c511 status=completed
+2026-06-14T02:42:38Z [USER LOG] Allocation: approved=true risk=medium blendedApy=582bps 6000bps Unlink Stable Vault, 4000bps Unlink Growth Vault
+2026-06-14T02:42:38Z [USER LOG] transcriptHash=0x7d4e9c2a1b8f60533e2a9d0c4b71f85a6c3e0b29d8f147a05b6e3c2d9f08a1b4 allocationsHash=0x8b693d19cd6682f3f84b4a0710dfbe8d3f3b97faf820fdd416ee251d78cc4f76
+2026-06-14T02:42:38Z [USER LOG] On-chain write: txHash=n/a error=n/a
+
+✓ Workflow Simulation Result:
+"{\"id\":\"01984c7a-1f30-7bb2-9a01-aef39d20c511\",\"status\":\"completed\",\"user\":\"0x065dF3372c1f9f86f5cfC220db027da2A754fdbF\",\"approved\":true,\"riskLevel\":\"medium\",\"blendedApyBps\":582,\"allocations\":[{\"vault\":\"0xedf18F946344395d9FC5e20A67289CCCE3f25b6F\",\"name\":\"Unlink Stable Vault\",\"bps\":6000},{\"vault\":\"0xE7c683E76b3a99d32CBda67BEB33eEdACAF6F90F\",\"name\":\"Unlink Growth Vault\",\"bps\":4000}],\"allocationsHash\":\"0x8b693d19cd6682f3f84b4a0710dfbe8d3f3b97faf820fdd416ee251d78cc4f76\",\"transcriptHash\":\"0x7d4e9c2a1b8f60533e2a9d0c4b71f85a6c3e0b29d8f147a05b6e3c2d9f08a1b4\",\"consumerAddress\":\"0x21937f68a223D6682f4b40517C6358446890Be1F\",\"chainSelectorName\":\"ethereum-testnet-sepolia-base-1\",\"write\":{\"attempted\":true,\"txHash\":null,\"error\":null}}"
+
+2026-06-14T02:42:38Z [SIMULATION] Execution finished signal received
+2026-06-14T02:42:38Z [SIMULATION] Skipping WorkflowEngineV2
+2026-06-14T02:42:38Z [SIMULATION] Failed to cleanup beholder error=BeholderClient has not been started: cannot stop unstarted service
+time=2026-06-14T02:42:38.799-04:00 level=INFO msg="context canceled"
+
+╭──────────────────────────────────────────────────────╮
+│ Simulation complete! Ready to deploy your workflow?  │
+│                                                      │
+│ Run cre account access to request deployment access. │
+╰──────────────────────────────────────────────────────╯

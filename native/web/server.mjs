@@ -1,0 +1,119 @@
+// Localhost test rig for the Ledger-custodied Unlink account.
+// Serves a tiny front + an API that drives the device:
+//   connect (read/cache keys) · deposit into the pool (EVM) · private transfer
+//   (Ledger-signed) · pool -> DeFi via an Execution Account (Ledger-signed).
+//
+// Run:  node --env-file=.env native/web/server.mjs    →  http://localhost:8799
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { createUnlinkAdmin } from "@unlink-xyz/sdk/admin";
+import { createUnlinkClient, evm } from "@unlink-xyz/sdk/client";
+import { createWalletClient, createPublicClient, http, encodeFunctionData } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { baseSepolia } from "viem/chains";
+import { buildDeviceAccount, reviewIntentOnDevice } from "../host/device-account.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ENV = process.env.UNLINK_ENVIRONMENT || "base-sepolia";
+const API_KEY = process.env.UNLINK_API_KEY || "";
+const FUNDING_PK = process.env.FUNDING_PRIVATE_KEY || "";
+const USDC = process.env.DEMO_TOKEN || "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const PORT = Number(process.env.WEB_PORT || 8799);
+
+let S = null; // { account, admin, client, address }
+
+const human = (base) => (Number(base) / 1e6).toFixed(2) + " USDC";
+const shortAddr = (a) => a.slice(0, 14) + "…" + a.slice(-6);
+
+function evmProvider() {
+  if (!FUNDING_PK) return undefined;
+  return evm.fromViem({
+    walletClient: createWalletClient({ account: privateKeyToAccount(FUNDING_PK), chain: baseSepolia, transport: http() }),
+    publicClient: createPublicClient({ chain: baseSepolia, transport: http() }),
+  });
+}
+
+async function balanceList() {
+  if (!S) return [];
+  const b = await S.admin.users.getBalances({ address: S.address });
+  return (b?.balances ?? []).map((x) => ({ token: x.token, amount: x.amount, human: human(x.amount) }));
+}
+
+const app = new Hono();
+
+app.get("/", (c) => c.html(readFileSync(join(HERE, "index.html"), "utf8")));
+
+// Connect: read+cache the device keys, build the account, register, open a client.
+app.post("/api/connect", async (c) => {
+  if (!API_KEY) return c.json({ error: "UNLINK_API_KEY missing (run with --env-file=.env)" }, 400);
+  try {
+    const account = await buildDeviceAccount();
+    const admin = createUnlinkAdmin({ environment: ENV, apiKey: API_KEY });
+    await admin.users.register(await account.getRegistrationPayload());
+    const client = createUnlinkClient({
+      environment: ENV, account, ...(evmProvider() ? { evm: evmProvider() } : {}),
+      authorizationToken: { provider: async ({ unlinkAddress }) => admin.authorizationTokens.issue({ unlinkAddress }) },
+      register: async () => admin.users.register(await account.getRegistrationPayload()),
+    });
+    S = { account, admin, client, address: account.address };
+    return c.json({ address: S.address, fromCache: !!account.fromCache, balances: await balanceList() });
+  } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
+});
+
+app.get("/api/status", async (c) =>
+  c.json({ connected: !!S, address: S?.address || null, balances: await balanceList() }));
+
+// Deposit USDC into the private pool. Funded by the EVM wallet (no Unlink spend,
+// so no Ledger signature needed) — credits the device account's private balance.
+app.post("/api/deposit", async (c) => {
+  if (!S) return c.json({ error: "not connected" }, 400);
+  const { amount = "1000000" } = await c.req.json().catch(() => ({}));
+  try {
+    await S.client.depositWithApproval({ token: USDC, amount });
+    return c.json({ ok: true, note: `deposited ${human(amount)} into the pool (EVM-funded)`, balances: await balanceList() });
+  } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
+});
+
+// Private transfer (pool -> pool). SPENDS the Unlink key → Ledger approve + sign.
+app.post("/api/transfer", async (c) => {
+  if (!S) return c.json({ error: "not connected" }, 400);
+  const { amount = "100000", recipient } = await c.req.json().catch(() => ({}));
+  try {
+    const to = recipient || S.address; // default self
+    const approved = await reviewIntentOnDevice(human(amount), shortAddr(to));
+    if (!approved) return c.json({ error: "rejected on device" }, 400);
+    const h = await S.client.transfer({ recipientAddress: to, amount, token: USDC });
+    return c.json({ ok: true, txId: h.txId, status: h.status, balances: await balanceList() });
+  } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
+});
+
+// Pool -> DeFi via an Execution Account. Withdraws `amount` privately into the EA
+// and runs `calls` from it (e.g. approve + supply). SPENDS → Ledger approve + sign.
+app.post("/api/execute", async (c) => {
+  if (!S) return c.json({ error: "not connected" }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  const amount = body.amount || "100000";
+  // default demo call: ERC-20 approve(spender, amount) from the EA — a real,
+  // harmless on-chain call that proves the EA executes a DeFi-style action.
+  const spender = body.spender || "0x0000000000000000000000000000000000000001";
+  const calls = body.calls || [{
+    target: USDC, value: "0",
+    data: encodeFunctionData({
+      abi: [{ name: "approve", type: "function", stateMutability: "nonpayable",
+        inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] }],
+      functionName: "approve", args: [spender, BigInt(amount)],
+    }),
+  }];
+  try {
+    const approved = await reviewIntentOnDevice(human(amount), "DeFi via EA");
+    if (!approved) return c.json({ error: "rejected on device" }, 400);
+    const res = await S.client.execute({ token: USDC, amount, calls });
+    return c.json({ ok: true, result: res, balances: await balanceList() });
+  } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
+});
+
+serve({ fetch: app.fetch, port: PORT }, () =>
+  console.log(`\n  Ledger × Unlink test rig → http://localhost:${PORT}\n`));

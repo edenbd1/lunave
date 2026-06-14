@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ledger × Unlink — test rig</title>
+<style>
+  :root { --bg:#0b0d12; --card:#151922; --line:#232a36; --fg:#e7ecf3; --mut:#8b97a8; --acc:#6ea8fe; --ok:#3ddc97; --warn:#ffb454; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width:680px; margin:0 auto; padding:32px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px; }
+  .card h2 { font-size:14px; margin:0 0 10px; color:var(--mut); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { background:var(--acc); color:#06101f; border:0; border-radius:10px; padding:10px 16px; font-weight:600; cursor:pointer; font-size:14px; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  input { background:#0e121a; border:1px solid var(--line); color:var(--fg); border-radius:10px; padding:9px 12px; width:120px; font-size:14px; }
+  .addr { font-family:ui-monospace,monospace; font-size:12px; color:var(--mut); word-break:break-all; margin-top:8px; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+  .pill.ledger { color:var(--warn); border-color:#3a2f1c; background:#1c160c; }
+  .bal { font-size:26px; font-weight:700; }
+  .bal small { font-size:13px; color:var(--mut); font-weight:400; }
+  .muted { color:var(--mut); font-size:13px; margin:6px 0 0; }
+  .log { list-style:none; padding:0; margin:14px 0 0; font-size:13px; }
+  .log li { padding:6px 0; border-top:1px solid var(--line); color:var(--mut); }
+  .log li b { color:var(--fg); }
+  .dot { width:8px; height:8px; border-radius:50%; background:#3a4254; display:inline-block; margin-right:6px; }
+  .dot.on { background:var(--ok); }
+  .err { color:#ff6b6b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span id="dot" class="dot"></span>Ledger × Unlink</h1>
+  <p class="sub">Spending key lives in the Secure Element. Every spend is approved on the device.</p>
+
+  <div class="card">
+    <h2>1 · Connect</h2>
+    <div class="row">
+      <button id="bConnect" onclick="connect()">Connect Ledger account</button>
+      <span class="pill" id="src"></span>
+    </div>
+    <div class="addr" id="addr"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Private balance (the pool)</h2>
+    <div class="bal" id="bal">— <small>USDC</small></div>
+    <div class="row" style="margin-top:12px">
+      <input id="depAmt" value="1" /> <span class="muted">USDC</span>
+      <button class="ghost" id="bDeposit" onclick="deposit()" disabled>Deposit into pool</button>
+      <span class="pill">EVM-funded · no Ledger tap</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Spend — each one is a Ledger tx</h2>
+    <div class="row">
+      <input id="xferAmt" value="0.5" /> <span class="muted">USDC</span>
+      <button id="bTransfer" onclick="transfer()" disabled>Private transfer</button>
+      <span class="pill ledger">Ledger approve + sign</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <input id="execAmt" value="0.1" /> <span class="muted">USDC</span>
+      <button id="bExecute" onclick="execute()" disabled>Pool → DeFi via EA</button>
+      <span class="pill ledger">Ledger approve + sign</span>
+    </div>
+  </div>
+
+  <ul class="log" id="log"></ul>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const log = (m, cls="") => { const li=document.createElement("li"); li.innerHTML=cls?`<span class="${cls}">${m}</span>`:m; $("log").prepend(li); };
+const u = (usdc) => String(Math.round(Number(usdc)*1e6));
+let busy=false;
+function setBusy(b){ busy=b; ["bConnect","bDeposit","bTransfer","bExecute"].forEach(id=>$(id).disabled = b || (id!=="bConnect" && !window.connected)); }
+
+async function api(path, body){
+  const r = await fetch(path, { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body||{}) });
+  const d = await r.json(); if(d.error) throw new Error(d.error); return d;
+}
+function render(d){
+  if(d.address){ $("addr").textContent = d.address; $("dot").className="dot on"; window.connected=true; }
+  if(d.fromCache!==undefined) $("src").textContent = d.fromCache ? "keys from cache (device idle)" : "keys read from device";
+  if(d.balances){ const usdc=d.balances.find(b=>b.token.toLowerCase().includes("036cbd")); $("bal").innerHTML = (usdc?usdc.human.replace(" USDC",""):"0.00") + ' <small>USDC</small>'; }
+}
+
+async function connect(){ try{ setBusy(true); log("Connecting… (first time opens the Ledger app to read keys)"); const d=await api("/api/connect"); render(d); log(`<b>Connected.</b> ${d.fromCache?"keys from cache — device not touched":"keys read & cached"}`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function deposit(){ try{ setBusy(true); const amt=u($("depAmt").value); log(`Depositing ${$("depAmt").value} USDC into the pool…`); const d=await api("/api/deposit",{amount:amt}); render(d); log(`<b>${d.note}</b>`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function transfer(){ try{ setBusy(true); const amt=u($("xferAmt").value); log(`Transfer ${$("xferAmt").value} USDC — <b>approve on your Ledger</b>…`); const d=await api("/api/transfer",{amount:amt}); render(d); log(`<b>Transfer ${d.status}</b> (${d.txId}) — signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function execute(){ try{ setBusy(true); const amt=u($("execAmt").value); log(`Pool → DeFi via EA, ${$("execAmt").value} USDC — <b>approve on your Ledger</b>…`); const d=await api("/api/execute",{amount:amt}); render(d); log(`<b>Executed via EA</b> — signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+</script>
+</body>
+</html>

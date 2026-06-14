@@ -357,6 +357,33 @@ app.get("/api/agent/status", (c) => c.json(bot.status()));
 app.post("/api/agent/tick", async (c) => c.json({ ok: true, status: await bot.tick() }));
 app.get("/api/agent/pgp", async (c) => c.json({ available: await pgpCardAvailable(), recipient: process.env.LEDGER_PGP_RECIPIENT || null }));
 
+// Redeem ALL open vault positions back to idle USDC in their Execution Account
+// (exit the strategy). Stops the agent first so it doesn't redeploy. One device
+// review, then one executeAccountCall per EA (redeemSelf every held vault).
+app.post("/api/redeem-all", async (c) => {
+  if (!S) return c.json({ error: "not connected" }, 400);
+  bot.stop();
+  const open = POSITIONS.filter((p) => p.vault && p.accountIndex != null);
+  if (!open.length) return c.json({ error: "no open vault positions to redeem" }, 400);
+  const byEA = new Map();
+  for (const p of open) { if (!byEA.has(p.accountIndex)) byEA.set(p.accountIndex, []); byEA.get(p.accountIndex).push(p); }
+  let totalBase = 0n; open.forEach((p) => (totalBase += BigInt(p.shares)));
+  try {
+    const approved = await reviewPairsOnDevice([
+      ["Redeem all", human(totalBase.toString())],
+      ["From", `${open.length} vault${open.length > 1 ? "s" : ""}`],
+      ["To", "Execution Account (idle)"],
+    ]);
+    if (!approved) return c.json({ error: "rejected on device" }, 400);
+    for (const [accountIndex, ps] of byEA) {
+      const calls = ps.map((p) => ({ target: p.vault, value: "0", data: encodeFunctionData({ abi: ERC4626_REDEEM_SELF, functionName: "redeemSelf", args: [BigInt(p.shares)] }) }));
+      await S.client.executeAccountCall({ accountIndex, calls });
+      ps.forEach((p) => { p.vault = null; p.vaultName = "idle in Execution Account"; });
+    }
+    return c.json({ ok: true, redeemed: human(totalBase.toString()), count: open.length, positions: POSITIONS, balances: await balanceList() });
+  } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
+});
+
 // --- AI yield co-pilot -------------------------------------------------------
 // Describe your goals, the agent proposes a concrete strategy. It signs nothing;
 // the only thing that deploys funds is your Ledger approval.

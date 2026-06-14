@@ -49,6 +49,31 @@ ledger/cre/
 The host-side client that calls the Attester directly (submit + poll) lives at
 `ledger/host/confidential-ai.mjs`, wired into the web app's `/api/strategy/propose`.
 
+## Running without a sandbox key — the local attester
+
+The Confidential AI Attester key is distributed out of band to hackathon
+participants. To let the whole pipeline run with no key, `ledger/host/local-attester.mjs`
+is a local stand-in that exposes the **identical `/v1/inference` contract** (same
+request body, same response shape with `output` + SHA-256 `request_digest` /
+`response_digest`), backed by Mistral instead of a TEE. It is mounted on the web
+app, so:
+
+- the web app's `/api/strategy/propose` submits the private profile, polls, and
+  gets the allocation + provenance digests — same code path as the real sandbox;
+- its output feeds the CRE workflow unchanged. `simulation/local-attester-callback.json`
+  is a real capture, verified end-to-end:
+
+  ```bash
+  cre workflow simulate yield-allocation-workflow --target staging-settings \
+    --non-interactive --trigger-index 0 --http-payload ./simulation/local-attester-callback.json
+  ```
+
+This is **honestly labelled**: it is not a TEE, the inference runs on Mistral on
+this host, and the digests are real SHA-256 over our own canonicalisation. To use
+the genuine TEE attestation, set `CONFIDENTIAL_AI_API_KEY` (from the Chainlink
+desk) — the client switches `baseUrl` to the real sandbox and everything else is
+unchanged. `LOCAL_ATTESTER=0` disables the stand-in.
+
 ## Prerequisites
 
 - CRE CLI: `curl -sSL https://app.chain.link/cre/install.sh | bash` (installs `~/.cre/bin/cre`)

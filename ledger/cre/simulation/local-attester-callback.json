@@ -1,0 +1,25 @@
+{
+  "id": "e48357ae-0a40-4576-bb37-c3f79dd40e93",
+  "status": "completed",
+  "model": "gemma4",
+  "system_prompt": "You are an autonomous DeFi yield strategist analysing a private profile in a TEE. Reply ONLY JSON {approved,risk_level,blended_apy_bps,reason,allocations:[{vault,name,bps}]}, bps sum 10000, only the given vault addresses.",
+  "prompt": "Private profile: goals=\"$10,000 steady yield, not too aggressive, good APY\"; capital 10000 USDC; Unlink balance 10000 USDC. Vaults: Unlink Stable Vault 0xedf18f946344395d9fc5e20a67289ccce3f25b6f ~4.2% low; Unlink Growth Vault 0xe7c683e76b3a99d32cbda67beb33eedacaf6f90f ~7.8% high.",
+  "created_at": "2026-06-14T07:04:08.097Z",
+  "started_at": "2026-06-14T07:04:08.097Z",
+  "output": "```json\n{\n  \"approved\": true,\n  \"risk_level\": \"moderate\",\n  \"blended_apy_bps\": 5000,\n  \"reason\": \"Balanced allocation between stable and growth vaults to achieve steady yield while capturing higher APY opportunities. Aligns with goal of $10,000 steady yield without excessive risk.\",\n  \"allocations\": [\n    {\n      \"vault\": \"0xedf18f946344395d9fc5e20a67289ccce3f25b6f\",\n      \"name\": \"Unlink Stable Vault\",\n      \"bps\": 7000\n    },\n    {\n      \"vault\": \"0xe7c683e76b3a99d32cbda67beb33eedacaf6f90f\",\n      \"name\": \"Unlink Growth Vault\",\n      \"bps\": 3000\n    }\n  ]\n}\n```",
+  "resources": [
+    {
+      "url": "inline://profile.json",
+      "digest": "d078f2fc62c82762d8047822710ab4a44ba5468b739469ba1e3538027c99b130",
+      "request_digest": "452ddce6d54f6c156ff54c1fc803efc21138cd0a70271ce99bf191c9f5abb89f",
+      "response_digest": "91ea5f8a81393c8f9d443e00d57143981e4bcd3bc47402ec8b946e0a90cf1304",
+      "content_type": "application/json",
+      "preprocessed": true
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 280,
+    "completion_tokens": 557
+  },
+  "completed_at": "2026-06-14T07:04:11.764Z"
+}

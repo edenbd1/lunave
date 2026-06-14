@@ -17,11 +17,21 @@
 // (or INFERENCE_API_KEY_VAR). With no key, runConfidentialInference returns null
 // and the caller falls back to the local strategy proposer.
 
-const BASE_URL = process.env.CONFIDENTIAL_AI_BASE_URL || "https://confidential-ai-dev-preview.cldev.cloud";
+const REAL_URL = process.env.CONFIDENTIAL_AI_BASE_URL || "https://confidential-ai-dev-preview.cldev.cloud";
+// Local stand-in attester (same /v1/inference contract), served by the web app itself.
+const LOCAL_URL = process.env.LOCAL_ATTESTER_URL || `http://localhost:${process.env.WEB_PORT || 8799}`;
 const MODEL = process.env.CONFIDENTIAL_AI_MODEL || "gemma4";
-const apiKey = () => process.env.CONFIDENTIAL_AI_API_KEY || process.env.INFERENCE_API_KEY_VAR || "";
+const realKey = () => process.env.CONFIDENTIAL_AI_API_KEY || process.env.INFERENCE_API_KEY_VAR || "";
 
-export function confidentialAiConfigured() { return !!apiKey(); }
+// "real": genuine TEE sandbox (needs a key). "local": the local stand-in (default
+// fallback when no key — set LOCAL_ATTESTER=0 to disable). "off": neither.
+export function attesterMode() {
+  if (realKey()) return "real";
+  if (process.env.LOCAL_ATTESTER !== "0") return "local";
+  return "off";
+}
+export function confidentialAiConfigured() { return attesterMode() !== "off"; }
+const baseUrl = () => (attesterMode() === "real" ? REAL_URL : LOCAL_URL);
 
 const SYSTEM =
   "You are an autonomous DeFi yield strategist analysing a user's PRIVATE financial " +
@@ -68,10 +78,9 @@ function normalize(decision, vaults) {
 }
 
 async function http(path, opts = {}) {
-  const r = await fetch(`${BASE_URL}${path}`, {
-    ...opts,
-    headers: { Authorization: `Bearer ${apiKey()}`, "content-type": "application/json", ...(opts.headers || {}) },
-  });
+  const headers = { "content-type": "application/json", ...(opts.headers || {}) };
+  if (attesterMode() === "real") headers.Authorization = `Bearer ${realKey()}`;
+  const r = await fetch(`${baseUrl()}${path}`, { ...opts, headers });
   const text = await r.text();
   let json; try { json = JSON.parse(text); } catch { json = null; }
   if (!r.ok) throw new Error(`Confidential AI ${r.status}: ${text.slice(0, 200)}`);
@@ -116,8 +125,10 @@ export async function runConfidentialInference({ goals, capitalBase, balanceBase
   if (!allocations) throw new Error("inference returned no usable allocation");
   const res = final.resources?.[0] || {};
   const blendedApy = Math.round(allocations.reduce((s, a) => s + (a.bps / 10000) * a.apy, 0) * 10) / 10;
+  const mode = attesterMode();
 
   return {
+    mode,                // "real" (TEE) or "local" (stand-in)
     inferenceId: id,
     model: final.model || MODEL,
     status: final.status,
@@ -126,13 +137,15 @@ export async function runConfidentialInference({ goals, capitalBase, balanceBase
     reason: decision.reason || "",
     allocations,         // [{ vault, vaultName, apy, risk, bps }]
     blendedApy,
-    // Provenance from the TEE (SHA-256 digests, not signatures):
+    // Provenance (SHA-256 digests, not signatures):
     digests: {
       content: res.digest || null,
       request: res.request_digest || null,
       response: res.response_digest || null, // -> on-chain transcriptHash
     },
-    enclave: { provider: "AWS Nitro (TEE)", attester: "Chainlink Confidential AI", baseUrl: BASE_URL },
+    enclave: mode === "real"
+      ? { provider: "AWS Nitro (TEE)", attester: "Chainlink Confidential AI", baseUrl: REAL_URL }
+      : { provider: "Local stand-in (Mistral, no TEE)", attester: "Chainlink Confidential AI — local stand-in", baseUrl: LOCAL_URL },
     raw: { output: final.output },
   };
 }

@@ -18,6 +18,7 @@ import { buildDeviceAccount, reviewIntentOnDevice, reviewPairsOnDevice, connectA
 import { ledgerEthClients, getLedgerEthAddress } from "../host/ledger-eth-account.mjs";
 import { runConfidentialStrategy, verifyAttestation, attestorAddress } from "../host/cre-attestation.mjs";
 import { runConfidentialInference, confidentialAiConfigured } from "../host/confidential-ai.mjs";
+import { mountLocalAttester } from "../host/local-attester.mjs";
 import { createYieldBot } from "../host/yield-bot.mjs";
 import { sealMandate, pgpCardAvailable } from "../host/mandate-seal.mjs";
 
@@ -59,6 +60,11 @@ async function balanceList() {
 }
 
 const app = new Hono();
+
+// Local stand-in for the Chainlink Confidential AI Attester: same /v1/inference
+// contract, so the whole pipeline runs without a sandbox API key. Disabled if a
+// real key is set (then the real TEE sandbox is used) or with LOCAL_ATTESTER=0.
+mountLocalAttester(app);
 
 app.get("/", (c) => c.html(readFileSync(join(HERE, "index.html"), "utf8")));
 
@@ -320,17 +326,18 @@ app.post("/api/strategy/propose", async (c) => {
         rebalance: { frequency: "continuous", trigger: "an APY edge above the mandate threshold", rule: "shift to the best risk-adjusted APY within the attested vaults" },
         rationale: inf.reason,
       };
+      const isReal = inf.mode === "real";
       const attestation = {
-        framework: "Chainlink Confidential AI Attester", live: true, confidential: true,
+        framework: "Chainlink Confidential AI Attester", live: isReal, local: !isReal, confidential: true,
         capability: "Confidential AI Attestation",
-        ai: { provider: "Chainlink Confidential AI (TEE)", model: inf.model, viaConfidentialHttp: true },
+        ai: { provider: isReal ? "Chainlink Confidential AI (TEE)" : "Local stand-in (Mistral)", model: inf.model, viaConfidentialHttp: isReal },
         enclave: inf.enclave, inferenceId: inf.inferenceId,
         commitments: { inputDigest: inf.digests.request, outputDigest: inf.digests.response },
         transcriptHash: inf.digests.response,
         cre: { workflow: "lunave-yield-allocation-workflow", chain: "Base Sepolia (ethereum-testnet-sepolia-base-1, 84532)", consumer: "AllocationGate", note: "CRE DON signs the response digest into a report via writeReport → AllocationGate.onReport" },
       };
       LAST_STRATEGY = strategy; LAST_ATTESTATION = attestation;
-      return c.json({ ok: true, strategy, attestation, verify: { valid: true, mode: "tee-provenance" } });
+      return c.json({ ok: true, strategy, attestation, verify: { valid: true, mode: isReal ? "tee-provenance" : "local-provenance" } });
     }
 
     // Local preview (no Attester key): local strategy + locally-signed attestation.

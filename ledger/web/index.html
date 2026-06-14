@@ -156,17 +156,18 @@ async function propose(){ try{ setBusy(true,"Co-pilot is thinking…"); const am
 function shortHex(h){ return h ? h.slice(0,10)+"…"+h.slice(-6) : ""; }
 function renderAttestation(att, verify){
   if(!att) return "";
-  if(att.live){
-    // Real Chainlink Confidential AI Attester: TEE inference + provenance digests,
-    // signed by the CRE DON into an on-chain report.
+  if(att.inferenceId){
+    // Chainlink Confidential AI Attester — same /v1/inference contract + CRE
+    // pipeline whether it ran in the real TEE (att.live) or the local stand-in.
+    const real = att.live;
     return `
-    <div style="margin-top:14px;border:1px solid #1c2e3a;background:#0c151c;border-radius:10px;padding:12px">
+    <div style="margin-top:14px;border:1px solid ${real?'#1c2e3a':'#2a2418'};background:${real?'#0c151c':'#15110a'};border-radius:10px;padding:12px">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:12px;font-weight:700;color:#6ea8fe">⛓ Chainlink Confidential AI Attester</span>
-        <span class="pill" style="color:var(--ok);border-color:#1c3a2c">live · TEE</span>
-        <span class="pill">${att.enclave?att.enclave.provider:'TEE'}</span>
+        <span style="font-size:12px;font-weight:700;color:${real?'#6ea8fe':'var(--warn)'}">⛓ Chainlink Confidential AI Attester</span>
+        <span class="pill" style="color:${real?'var(--ok)':'var(--warn)'};border-color:${real?'#1c3a2c':'#3a2f1c'}">${real?'live · TEE':'local stand-in'}</span>
+        <span class="pill">${att.enclave?att.enclave.provider:''}</span>
       </div>
-      <p class="muted" style="font-size:12px;margin:8px 0 6px">Your private profile (goals, capital, Unlink balance) was analysed by ${att.ai.model} inside a TEE — the raw profile never left the enclave. The CRE DON signs the response digest into an on-chain report consumed by ${att.cre.consumer} on ${att.cre.chain}.</p>
+      <p class="muted" style="font-size:12px;margin:8px 0 6px">Your private profile (goals, capital, Unlink balance) was analysed by ${att.ai.model} ${real?'inside a TEE — the raw profile never left the enclave':'by a local stand-in exposing the identical /v1/inference contract (swap in a sandbox key for the real TEE)'}. The CRE DON signs the response digest into an on-chain report consumed by ${att.cre.consumer} on ${att.cre.chain}.</p>
       <div class="addr" style="margin:2px 0">inference id · ${att.inferenceId}</div>
       <div class="addr" style="margin:2px 0">request digest · ${shortHex(att.commitments.inputDigest)}</div>
       <div class="addr" style="margin:2px 0">response digest (transcriptHash) · ${shortHex(att.transcriptHash)}</div>

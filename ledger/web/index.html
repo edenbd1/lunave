@@ -239,29 +239,34 @@ function renderProposal(s, att, verify){
     <div style="font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-top:8px">Autonomous rebalancing</div>
     <p class="muted" style="font-size:13px;margin:4px 0">${rb.frequency?rb.frequency+" · ":""}${rb.trigger||""}${rb.rule?". "+rb.rule:""}</p>
     ${renderAttestation(att, verify)}
-    <div class="row" style="margin-top:12px"><button class="deployBtn" onclick="deployStrategy(this)">Confirm &amp; deploy on Ledger</button> <span class="pill ledger">🟦 Unlink app</span></div>`;
+    <div class="row" style="margin-top:12px"><button class="deployBtn" data-stage="validate" onclick="deployStep(this)">Confirm &amp; deploy on Ledger</button> <span class="pill ledger">🟪 OpenPGP → 🟦 Unlink</span></div>`;
 }
-async function deployStrategy(btn){
-  try{
-    if(btn) btn.disabled=true;
-    // Step 1 — VALIDATE on the Ledger via OpenPGP (encrypt the strategy + open it on the device)
-    setBusy(true,"🟪 Open the <b>OpenPGP app</b> on your Ledger and enter your <b>PIN</b> to validate the strategy");
-    if(btn) btn.textContent="validate on OpenPGP…";
-    chatBubble("Sealing the strategy to your Ledger and opening it on the device — <b>OpenPGP app + PIN</b>. You can't deploy an allocation your Ledger hasn't validated.","bot");
-    await api("/api/strategy/validate");
-    chatBubble("<b>Strategy validated</b> — encrypted to your Ledger and decrypted on the device (OpenPGP) ✔.","bot");
-    // Step 2 — DEPOSIT with Unlink
-    setBusy(true,"🟦 Now switch to the <b>Unlink app</b> and tap <b>Approve</b> to deposit");
-    if(btn) btn.textContent="approve on Unlink…";
-    chatBubble("Now the on-chain deposit — <b>switch to the Unlink app</b> and tap Approve…","bot");
-    const d=await api("/api/strategy/deploy"); render(d);
-    document.querySelectorAll(".deployBtn").forEach(b=>{ b.disabled=true; }); if(btn) btn.textContent="deployed ✔";
-    const alloc=(d.strategy.allocations||[]).map(a=>`${a.pct}% ${a.vaultName.replace(/^Unlink /,"")}`).join(", ");
-    chatBubble(`<b>Deployed.</b> Allocated ${alloc}, signed on the Unlink app ✔ — validated under hardware custody first.`,"bot");
-    $("agentPanel").style.display="block"; renderAgent(null); loadGate();
-    chatBubble(`Click <b>Arm agent</b> to let the AI maintain this validated allocation on its own (no per-move tap). Keep the Unlink app open.`,"bot");
-  }catch(e){ if(btn){ btn.disabled=false; btn.textContent="Confirm & deploy on Ledger"; } chatBubble("<span class='err'>"+esc(e.message)+"</span>","bot"); if(/OpenPGP|validate/i.test(e.message||"")) chatBubble("Open the <b>OpenPGP app</b> on your Ledger, then click Confirm again.","bot"); }
-  finally{ setBusy(false); }
+// Two-stage so you can switch apps in between: 1) validate on OpenPGP, then YOU
+// switch to the Unlink app, then 2) deposit. No "do both at once".
+async function deployStep(btn){
+  const stage = btn.dataset.stage || "validate";
+  if(stage==="validate"){
+    try{ btn.disabled=true; btn.textContent="validating on OpenPGP…";
+      setBusy(true,"🟪 Open the <b>OpenPGP app</b> on your Ledger and enter your <b>PIN</b> to validate");
+      chatBubble("Sealing the strategy to your Ledger and opening it on the device — <b>OpenPGP app + PIN</b>. You can't deploy an allocation your Ledger hasn't validated.","bot");
+      await api("/api/strategy/validate");
+      chatBubble("<b>Strategy validated</b> on your Ledger (OpenPGP) ✔. Now <b>switch to the Unlink app</b>, then click <b>Deposit now</b>.","bot");
+      btn.dataset.stage="deposit"; btn.textContent="Deposit now (Unlink app)"; btn.disabled=false;
+      setBusy(false); setTimeout(()=>deviceHint("🟦 Switch to the <b>Unlink app</b> on your Ledger, then click <b>Deposit now</b>", true), 40);
+    }catch(e){ btn.disabled=false; btn.textContent="Confirm & deploy on Ledger"; setBusy(false); chatBubble("<span class='err'>"+esc(e.message)+"</span>","bot"); if(/OpenPGP|validate|PIN/i.test(e.message||"")) chatBubble("Open the <b>OpenPGP app</b> on your Ledger, then click Confirm again.","bot"); }
+  } else {
+    try{ btn.disabled=true; btn.textContent="approve on Unlink…";
+      setBusy(true,"🟦 Open the <b>Unlink app</b> and tap <b>Approve</b> to deposit");
+      chatBubble("Depositing on-chain — <b>Unlink app</b>, tap Approve…","bot");
+      const d=await api("/api/strategy/deploy"); render(d);
+      document.querySelectorAll(".deployBtn").forEach(b=>{ b.disabled=true; }); btn.textContent="deployed ✔";
+      const alloc=(d.strategy.allocations||[]).map(a=>`${a.pct}% ${a.vaultName.replace(/^Unlink /,"")}`).join(", ");
+      chatBubble(`<b>Deployed.</b> Allocated ${alloc}, signed on the Unlink app ✔ — validated under hardware custody first.`,"bot");
+      $("agentPanel").style.display="block"; renderAgent(null); loadGate();
+      chatBubble(`Click <b>Arm agent</b> to let the AI maintain this validated allocation on its own (no per-move tap). Keep the Unlink app open.`,"bot");
+    }catch(e){ btn.disabled=false; btn.textContent="Deposit now (Unlink app)"; chatBubble("<span class='err'>"+esc(e.message)+"</span>","bot"); if(/Unlink app|6e00|6d02/i.test(e.message||"")) chatBubble("Switch to the <b>Unlink app</b> on your Ledger, then click <b>Deposit now</b> again.","bot"); }
+    finally{ setBusy(false); }
+  }
 }
 
 // --- Autonomous agent (lives inside card 6) ---

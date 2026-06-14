@@ -21,7 +21,7 @@ import { runConfidentialInference, confidentialAiConfigured } from "../host/conf
 import { mountLocalAttester } from "../host/local-attester.mjs";
 import { readAttestedAllocation, isVaultAttested, allocationGateAddress, writeAttestedAllocation } from "../host/allocation-gate.mjs";
 import { createYieldBot } from "../host/yield-bot.mjs";
-import { sealStrategy, unsealStrategy, sealMandate, pgpCardAvailable } from "../host/mandate-seal.mjs";
+import { sealStrategy, unsealStrategy, sealMandate, pgpCardAvailable, releaseCard } from "../host/mandate-seal.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENV = process.env.UNLINK_ENVIRONMENT || "base-sepolia";
@@ -543,6 +543,7 @@ app.post("/api/strategy/validate", async (c) => {
       const opened = await unsealStrategy(); // gpg --decrypt -> Ledger OpenPGP app (PIN)
       if (JSON.stringify(opened.allocations || []) !== JSON.stringify(doc.allocations)) throw new Error("strategy integrity mismatch");
       s.validated = true;
+      await releaseCard(); // free the card's HID for the Unlink app's APDU next
     } catch (e) {
       s.validated = false;
       return c.json({ error: `Open the OpenPGP app on your Ledger and enter your PIN to validate the strategy. (${String(e.message || e).split("\n")[0]})`, needsUnseal: true }, 400);

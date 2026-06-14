@@ -62,6 +62,12 @@ export async function unsealDoc(name) {
 
 export function docSealed(name) { return existsSync(paths(name).gpg); }
 
+// Release the OpenPGP card (kill scdaemon) so the device's HID interface is free
+// for the Unlink app's APDU transport after validation.
+export async function releaseCard() {
+  try { await exec("gpgconf", ["--kill", "scdaemon"], { timeout: 5000 }); } catch { /* best-effort */ }
+}
+
 // Named wrappers.
 export const sealStrategy = (s) => sealDoc("strategy", s);
 export const unsealStrategy = () => unsealDoc("strategy");

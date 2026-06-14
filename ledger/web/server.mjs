@@ -70,6 +70,33 @@ async function balanceList() {
   return (b?.balances ?? []).map((x) => ({ token: x.token, amount: x.amount, human: human(x.amount) }));
 }
 
+const ERC20_BALANCE_OF = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "a", type: "address" }], outputs: [{ type: "uint256" }] }];
+const readClient = createPublicClient({ chain: baseSepolia, transport: http(process.env.BASE_SEPOLIA_RPC || "https://base-sepolia-rpc.publicnode.com") });
+
+// Re-discover open vault positions + idle EA balances on-chain so funds from a
+// previous session reappear after a restart/reconnect. The SDK lists the user's
+// Execution Accounts (identity only — no balances); we read each deployed EA's
+// vault and USDC balances directly on Base Sepolia.
+async function discoverPositions(client) {
+  try {
+    const page = await client.executionAccounts.list({ limit: 100 });
+    // status is "active" | "reserved" | null at runtime; deployed EAs are the ones
+    // that have an on-chain address.
+    const deployed = (page?.accounts || []).filter((a) => a.account_address);
+    const found = [];
+    for (const ea of deployed) {
+      const addr = ea.account_address;
+      for (const v of VAULTS) {
+        const bal = await readClient.readContract({ address: v.address, abi: ERC20_BALANCE_OF, functionName: "balanceOf", args: [addr] }).catch(() => 0n);
+        if (bal > 0n) found.push({ id: `ea${ea.account_index}-${v.address.slice(2, 8)}`, vault: v.address, vaultName: v.name, apy: v.apy, accountIndex: ea.account_index, shares: bal.toString() });
+      }
+      const idle = await readClient.readContract({ address: USDC, abi: ERC20_BALANCE_OF, functionName: "balanceOf", args: [addr] }).catch(() => 0n);
+      if (idle > 0n) found.push({ id: `ea${ea.account_index}-idle`, vault: null, vaultName: "idle in Execution Account", accountIndex: ea.account_index, shares: idle.toString() });
+    }
+    return found;
+  } catch (e) { console.log("[discover] positions:", String(e.message || e)); return []; }
+}
+
 const app = new Hono();
 
 // Local stand-in for the Chainlink Confidential AI Attester: same /v1/inference
@@ -95,7 +122,8 @@ app.post("/api/connect", async (c) => {
       register: async () => admin.users.register(await account.getRegistrationPayload()),
     });
     S = { account, admin, client, address: account.address };
-    return c.json({ address: S.address, fromCache: !!account.fromCache, balances: await balanceList() });
+    POSITIONS = await discoverPositions(client); // recover positions from prior sessions
+    return c.json({ address: S.address, fromCache: !!account.fromCache, balances: await balanceList(), positions: POSITIONS });
   } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
 });
 

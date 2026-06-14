@@ -30,6 +30,12 @@
   .dot { width:8px; height:8px; border-radius:50%; background:#3a4254; display:inline-block; margin-right:6px; }
   .dot.on { background:var(--ok); }
   .err { color:#ff6b6b; }
+  .chat { display:flex; flex-direction:column; gap:10px; max-height:520px; overflow-y:auto; padding:4px 2px; }
+  .bubble { max-width:90%; padding:10px 13px; border-radius:14px; font-size:14px; line-height:1.45; }
+  .bubble.user { align-self:flex-end; background:var(--acc); color:#06101f; border-bottom-right-radius:4px; }
+  .bubble.bot { align-self:flex-start; background:#0e131c; border:1px solid var(--line); border-bottom-left-radius:4px; }
+  .bubble.bot.proposal { max-width:100%; width:100%; }
+  .typing { color:var(--mut); font-size:13px; align-self:flex-start; }
 </style>
 </head>
 <body>
@@ -88,14 +94,12 @@
 
   <div class="card">
     <h2>6 · AI yield co-pilot</h2>
-    <p class="muted">Describe your goals. The agent proposes a yield strategy across vaults. It signs nothing; only your Ledger deploys the funds.</p>
-    <input id="goals" value="safe steady yield on my USDC" placeholder="e.g. aggressive growth, or safe steady yield" style="width:100%;margin:6px 0" />
-    <div class="row">
-      <input id="stratAmt" value="0.1" /> <span class="muted">USDC</span>
-      <button id="bPropose" onclick="propose()" disabled>Propose strategy</button>
-      <span class="pill">AI advises, never signs</span>
+    <p class="muted">Just talk to it. Say what you want — “invest 10,000 USDC, not too aggressive”. It reads your goals, fills in defaults if you're vague, proposes a strategy, and asks you to confirm. It signs nothing; only your Ledger deploys.</p>
+    <div id="chat" class="chat"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="chatInput" placeholder="e.g. invest 10,000 USDC, steady yield" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')chatSend()" disabled />
+      <button id="bChat" onclick="chatSend()" disabled>Send</button>
     </div>
-    <div id="strategy" style="display:none;margin-top:14px"></div>
   </div>
 
   <div class="card">
@@ -128,7 +132,8 @@ let busy=false;
 function setBusy(b, label){
   busy=!!b;
   // only the action BUTTONS lock (the device does one op at a time) — inputs stay editable
-  ["bConnect","bShield","bTransfer","bExecute","bPropose","bDeploy","bAgent"].forEach(id=>{ const el=$(id); if(el) el.disabled = busy || (id!=="bConnect" && !window.connected); });
+  ["bConnect","bShield","bTransfer","bExecute","bChat","bAgent"].forEach(id=>{ const el=$(id); if(el) el.disabled = busy || (id!=="bConnect" && !window.connected); });
+  const ci=$("chatInput"); if(ci) ci.disabled = busy || !window.connected;
 }
 
 async function api(path, body){
@@ -141,7 +146,7 @@ function render(d){
   if(d.balances){ const usdc=d.balances.find(b=>b.token.toLowerCase().includes("036cbd")); $("bal").innerHTML = (usdc?usdc.human.replace(" USDC",""):"0.00") + ' <small>USDC</small>'; }
 }
 
-async function connect(){ try{ setBusy(true,"Connecting — approve on your Ledger (Unlink app)"); log("Connecting… (open the Unlink app + tap to approve)"); const d=await api("/api/connect"); render(d); log(`<b>Connected.</b> ${d.fromCache?"keys from cache":"keys read & cached"}`); try{ const p=await(await fetch("/api/positions")).json(); renderPositions(p.positions); }catch(_){} loadGate(); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function connect(){ try{ setBusy(true,"Connecting — approve on your Ledger (Unlink app)"); log("Connecting… (open the Unlink app + tap to approve)"); const d=await api("/api/connect"); render(d); log(`<b>Connected.</b> ${d.fromCache?"keys from cache":"keys read & cached"}`); try{ const p=await(await fetch("/api/positions")).json(); renderPositions(p.positions); }catch(_){} loadGate(); if(!$("chat").children.length) chatBubble("Hi — I'm your yield co-pilot. Tell me what you'd like to do, e.g. <i>“invest 10,000 USDC, not too aggressive”</i>. I'll propose a strategy and you confirm on your Ledger.","bot"); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function shieldLedger(){ try{ setBusy(true,"Shielding — sign Permit2 on your Ledger (Ethereum app)"); const amt=u($("shieldAmt").value); log(`Shield ${$("shieldAmt").value} USDC from your Ledger — <b>open the Ethereum app, sign</b>…`); const d=await api("/api/shield-ledger",{amount:amt}); render(d); log(`<b>${d.note}</b> ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function transfer(){ try{ setBusy(true,"Sending — approve + sign on your Ledger (Unlink app)"); const amt=u($("xferAmt").value); const recipient=$("recip").value.trim()||undefined; log(`Send ${$("xferAmt").value} USDC${recipient?" to "+recipient.slice(0,14)+"…":" (to yourself)"} — <b>approve on your Ledger</b>…`); const d=await api("/api/transfer",{amount:amt,recipient}); render(d); log(`<b>Sent — ${d.status}</b> (${d.txId}) — signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function execute(){ const vault=$("vault").value.trim(); if(!vault){ log("Enter a vault address first.","err"); return; } try{ setBusy(true,"Depositing to vault — approve + sign on your Ledger (Unlink app)"); const amt=u($("execAmt").value); log(`Deposit ${$("execAmt").value} USDC to vault ${vault.slice(0,12)}… via EA — <b>approve on your Ledger</b>…`); const d=await api("/api/execute",{amount:amt,vault}); render(d); renderPositions(d.positions); log(`<b>Deposited — got vault shares</b> (held by the Execution Account, redeemable). Signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
@@ -153,7 +158,22 @@ function renderPositions(positions){ const el=$("positions"); if(!positions||!po
 async function redeem(id){ try{ setBusy(true,"Redeeming — approve + sign on your Ledger (Unlink app)"); log(`Redeeming vault shares back into the Execution Account — <b>approve on your Ledger</b>…`); const d=await api("/api/redeem",{id}); render(d); renderPositions(d.positions); log(`<b>Redeemed</b> — shares burned, USDC idle in the Execution Account. Signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 async function rebalance(id){ try{ setBusy(true,"Rebalancing — approve + sign on your Ledger (Unlink app)"); log(`Rebalancing to the other vault (within the Execution Account) — <b>approve on your Ledger</b>…`); const d=await api("/api/rebalance",{id}); render(d); renderPositions(d.positions); log(`<b>Rebalanced</b> — moved to a new vault without leaving the Execution Account. Signed on device ✔`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
 
-async function propose(){ try{ setBusy(true,"Co-pilot is thinking…"); const amt=u($("stratAmt").value); const goals=$("goals").value.trim(); log(`Co-pilot designing a strategy for ${$("stratAmt").value} USDC — <b>confidential CRE workflow</b>…`); const d=await api("/api/strategy/propose",{amount:amt,goals}); renderStrategy(d.strategy, d.attestation, d.verify); log(`<b>Strategy proposed</b> (${d.strategy.source==="rule"?"rule-based":"AI · "+d.strategy.source}) — Chainlink AI Attestation ${d.verify&&d.verify.valid?"verified ✔":"emitted"}. Approve on your Ledger.`); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+function chatBubble(html, cls){ const d=document.createElement("div"); d.className="bubble "+cls; d.innerHTML=html; $("chat").appendChild(d); $("chat").scrollTop=$("chat").scrollHeight; return d; }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+async function chatSend(){
+  const inp=$("chatInput"); const msg=inp.value.trim(); if(!msg||busy) return;
+  chatBubble(esc(msg),"user"); inp.value="";
+  const typing=chatBubble("co-pilot is thinking… <span class='muted'>(confidential inference → CRE)</span>","typing");
+  try{ setBusy(true);
+    const d=await api("/api/strategy/chat",{message:msg});
+    typing.remove();
+    // disable any earlier proposal's deploy button — only the latest is live
+    document.querySelectorAll(".deployBtn").forEach(b=>{ b.disabled=true; b.textContent="superseded"; });
+    chatBubble(esc(d.reply),"bot");
+    chatBubble(renderProposal(d.strategy, d.attestation, d.verify),"bot proposal");
+  }catch(e){ typing.remove(); chatBubble("<span class='err'>"+esc(e.message)+"</span>","bot"); }
+  finally{ setBusy(false); }
+}
 function shortHex(h){ return h ? h.slice(0,10)+"…"+h.slice(-6) : ""; }
 function renderAttestation(att, verify){
   if(!att) return "";
@@ -190,30 +210,26 @@ function renderAttestation(att, verify){
       <div class="addr" style="margin:2px 0">attestor · ${shortHex(att.report.signer)}${ok?` → recovered ${shortHex(verify.recovered)} ✔`:''}</div>
     </div>`;
 }
-function renderStrategy(s, att, verify){
-  const el=$("strategy"); el.style.display="block";
+function renderProposal(s, att, verify){
   const bars = (s.allocations||[]).map(a=>`
     <div style="margin:8px 0">
       <div style="display:flex;justify-content:space-between;font-size:13px"><span><b style="color:var(--fg)">${a.pct}%</b> ${a.vaultName} <span class="muted">~${a.apy}% APY</span></span></div>
-      <div style="height:7px;background:#0e121a;border:1px solid var(--line);border-radius:4px;overflow:hidden;margin-top:3px"><i style="display:block;height:100%;width:${a.pct}%;background:var(--acc)"></i></div>
+      <div style="height:7px;background:#0a0e15;border:1px solid var(--line);border-radius:4px;overflow:hidden;margin-top:3px"><i style="display:block;height:100%;width:${a.pct}%;background:var(--acc)"></i></div>
     </div>`).join("");
   const rb=s.rebalance||{};
-  el.innerHTML = `
+  return `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <div style="font-weight:700;font-size:15px">${s.summary}</div>
       <span class="pill" style="color:var(--ok);border-color:#1c3a2c">~${s.blendedApy}% blended</span>
       <span class="pill">${s.riskLevel} risk</span>
-      <span class="pill ledger">${s.source==="rule"?"rule-based":"AI · "+s.source}</span>
     </div>
-    <p class="muted" style="margin:8px 0 6px">${s.rationale||""}</p>
     <div style="font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-top:10px">Portfolio allocation</div>
     ${bars}
     <div style="font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-top:8px">Autonomous rebalancing</div>
     <p class="muted" style="font-size:13px;margin:4px 0">${rb.frequency?rb.frequency+" · ":""}${rb.trigger||""}${rb.rule?". "+rb.rule:""}</p>
     ${renderAttestation(att, verify)}
-    <div class="row" style="margin-top:12px"><button id="bDeploy" onclick="deployStrategy()">Approve &amp; deploy on Ledger</button> <span class="pill ledger">Ledger approve + sign</span></div>`;
+    <div class="row" style="margin-top:12px"><button class="deployBtn" onclick="deployStrategy(this)">Confirm &amp; deploy on Ledger</button> <span class="pill ledger">Ledger approve + sign</span></div>`;
 }
-async function deployStrategy(){ try{ setBusy(true,"Deploying strategy — approve on your Ledger"); log(`Deploying the strategy — <b>approve on your Ledger</b>…`); const d=await api("/api/strategy/deploy"); render(d); $("strategy").style.display="none"; const alloc=(d.strategy.allocations||[]).map(a=>`${a.pct}% ${a.vaultName.replace(/^Unlink /,"")}`).join(", "); log(`<b>Strategy deployed</b> — allocated ${alloc}, signed on device ✔. You can now arm the autonomous agent (card 7).`); loadGate(); }catch(e){ log(e.message,"err"); } finally{ setBusy(false); } }
+async function deployStrategy(btn){ try{ setBusy(true); if(btn){ btn.disabled=true; btn.textContent="approve on your Ledger…"; } const d=await api("/api/strategy/deploy"); render(d); document.querySelectorAll(".deployBtn").forEach(b=>{ b.disabled=true; }); if(btn) btn.textContent="deployed ✔"; const alloc=(d.strategy.allocations||[]).map(a=>`${a.pct}% ${a.vaultName.replace(/^Unlink /,"")}`).join(", "); chatBubble(`<b>Deployed.</b> Allocated ${alloc}, signed on your Ledger ✔. You can arm the autonomous agent below (card 7).`,"bot"); loadGate(); }catch(e){ if(btn){ btn.disabled=false; btn.textContent="Confirm & deploy on Ledger"; } chatBubble("<span class='err'>"+esc(e.message)+"</span>","bot"); } finally{ setBusy(false); } }
 
 // --- Autonomous agent (card 7) ---
 let agentRunning=false, agentPoll=null;

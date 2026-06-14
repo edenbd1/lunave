@@ -308,54 +308,88 @@ app.get("/api/agent/pgp", async (c) => c.json({ available: await pgpCardAvailabl
 // the only thing that deploys funds is your Ledger approval.
 app.get("/api/strategy/vaults", (c) => c.json({ vaults: VAULTS }));
 
+// Build a proposal (strategy + attestation) for goals + amount. Sets LAST_*.
+async function buildProposal({ goals, amountBase }) {
+  // Preferred path: the REAL Chainlink Confidential AI Attester (or the local
+  // stand-in). The private profile (goals + capital + balance) runs through the
+  // inference API; the response carries SHA-256 provenance digests that the CRE
+  // workflow signs into a DON-attested report → AllocationGate on Base Sepolia.
+  if (confidentialAiConfigured()) {
+    const bal = (await balanceList()).find((b) => b.token.toLowerCase().includes("036cbd"));
+    const inf = await runConfidentialInference({
+      goals, capitalBase: amountBase, balanceBase: bal?.amount, vaults: VAULTS,
+      creCallbackUrl: process.env.CRE_CALLBACK_URL,
+    });
+    const strategy = {
+      source: `chainlink-confidential-ai:${inf.model}`,
+      summary: inf.reason || "Confidential AI yield allocation",
+      riskLevel: inf.riskLevel, amountBase,
+      allocations: inf.allocations.map((a) => ({ vault: a.vault, vaultName: a.vaultName, apy: a.apy, risk: a.risk, pct: Math.round(a.bps / 100) })),
+      blendedApy: inf.blendedApy,
+      rebalance: { frequency: "continuous", trigger: "an APY edge above the mandate threshold", rule: "shift to the best risk-adjusted APY within the attested vaults" },
+      rationale: inf.reason,
+    };
+    const isReal = inf.mode === "real";
+    const attestation = {
+      framework: "Chainlink Confidential AI Attester", live: isReal, local: !isReal, confidential: true,
+      capability: "Confidential AI Attestation",
+      ai: { provider: isReal ? "Chainlink Confidential AI (TEE)" : "Local stand-in (Mistral)", model: inf.model, viaConfidentialHttp: isReal },
+      enclave: inf.enclave, inferenceId: inf.inferenceId,
+      commitments: { inputDigest: inf.digests.request, outputDigest: inf.digests.response },
+      transcriptHash: inf.digests.response,
+      cre: { workflow: "lunave-yield-allocation-workflow", chain: "Base Sepolia (ethereum-testnet-sepolia-base-1, 84532)", consumer: "AllocationGate", note: "CRE DON signs the response digest into a report via writeReport → AllocationGate.onReport" },
+    };
+    LAST_STRATEGY = strategy; LAST_ATTESTATION = attestation;
+    return { strategy, attestation, verify: { valid: true, mode: isReal ? "tee-provenance" : "local-provenance" } };
+  }
+  // Local preview (no Attester at all): local strategy + locally-signed attestation.
+  const { strategy, attestation } = await runConfidentialStrategy({
+    goals, amountBase, vaults: VAULTS, attestedAt: Math.floor(Date.now() / 1000),
+  });
+  LAST_STRATEGY = strategy; LAST_ATTESTATION = attestation;
+  return { strategy, attestation, verify: await verifyAttestation(attestation) };
+}
+
 app.post("/api/strategy/propose", async (c) => {
   if (!S) return c.json({ error: "not connected" }, 400);
   const body = await c.req.json().catch(() => ({}));
-  const amountBase = body.amount || "100000";
-  const goals = body.goals || "";
   try {
-    // Preferred path: the REAL Chainlink Confidential AI Attester. The private
-    // profile (goals + capital + Unlink balance) is sent to an inference API that
-    // runs the allocation LLM inside a TEE; the response carries SHA-256
-    // provenance digests. The CRE workflow (ledger/cre) signs the response digest
-    // into a DON-attested report → AllocationGate on Base Sepolia.
-    if (confidentialAiConfigured()) {
-      const bal = (await balanceList()).find((b) => b.token.toLowerCase().includes("036cbd"));
-      const inf = await runConfidentialInference({
-        goals, capitalBase: amountBase, balanceBase: bal?.amount, vaults: VAULTS,
-        creCallbackUrl: process.env.CRE_CALLBACK_URL,
-      });
-      const strategy = {
-        source: `chainlink-confidential-ai:${inf.model}`,
-        summary: inf.reason || "Confidential AI yield allocation",
-        riskLevel: inf.riskLevel, amountBase,
-        allocations: inf.allocations.map((a) => ({ vault: a.vault, vaultName: a.vaultName, apy: a.apy, risk: a.risk, pct: Math.round(a.bps / 100) })),
-        blendedApy: inf.blendedApy,
-        rebalance: { frequency: "continuous", trigger: "an APY edge above the mandate threshold", rule: "shift to the best risk-adjusted APY within the attested vaults" },
-        rationale: inf.reason,
-      };
-      const isReal = inf.mode === "real";
-      const attestation = {
-        framework: "Chainlink Confidential AI Attester", live: isReal, local: !isReal, confidential: true,
-        capability: "Confidential AI Attestation",
-        ai: { provider: isReal ? "Chainlink Confidential AI (TEE)" : "Local stand-in (Mistral)", model: inf.model, viaConfidentialHttp: isReal },
-        enclave: inf.enclave, inferenceId: inf.inferenceId,
-        commitments: { inputDigest: inf.digests.request, outputDigest: inf.digests.response },
-        transcriptHash: inf.digests.response,
-        cre: { workflow: "lunave-yield-allocation-workflow", chain: "Base Sepolia (ethereum-testnet-sepolia-base-1, 84532)", consumer: "AllocationGate", note: "CRE DON signs the response digest into a report via writeReport → AllocationGate.onReport" },
-      };
-      LAST_STRATEGY = strategy; LAST_ATTESTATION = attestation;
-      return c.json({ ok: true, strategy, attestation, verify: { valid: true, mode: isReal ? "tee-provenance" : "local-provenance" } });
-    }
+    return c.json({ ok: true, ...(await buildProposal({ goals: body.goals || "", amountBase: body.amount || "100000" })) });
+  } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
+});
 
-    // Local preview (no Attester key): local strategy + locally-signed attestation.
-    const { strategy, attestation } = await runConfidentialStrategy({
-      goals, amountBase, vaults: VAULTS, attestedAt: Math.floor(Date.now() / 1000),
-    });
-    LAST_STRATEGY = strategy;
-    LAST_ATTESTATION = attestation;
-    const verify = await verifyAttestation(attestation);
-    return c.json({ ok: true, strategy, attestation, verify });
+// Parse a USDC amount out of free text: "$10,000", "10,000 USDC", "10k", "0.5".
+function parseAmount(text) {
+  const m = String(text).match(/(?:\$\s*)?(\d[\d,]*\.?\d*)\s*(k|usdc|usd|\$)?/i);
+  if (!m) return null;
+  let n = parseFloat(m[1].replace(/,/g, ""));
+  if (!isFinite(n) || n <= 0) return null;
+  if (/^k$/i.test(m[2] || "")) n *= 1000;
+  return String(Math.round(n * 1e6)); // base units (6 decimals)
+}
+
+// Conversational co-pilot: you just talk to it. It parses the amount + reads your
+// goals from the message, fills defaults when you're vague, proposes a concrete
+// strategy and asks you to confirm. Confirming hits /api/strategy/deploy (Ledger).
+app.post("/api/strategy/chat", async (c) => {
+  if (!S) return c.json({ error: "not connected" }, 400);
+  const { message = "" } = await c.req.json().catch(() => ({}));
+  if (!message.trim()) return c.json({ error: "say what you'd like to do" }, 400);
+  const parsed = parseAmount(message);
+  const bal = (await balanceList()).find((b) => b.token.toLowerCase().includes("036cbd"));
+  const amountBase = parsed || (bal && Number(bal.amount) > 0 ? bal.amount : "100000");
+  try {
+    const { strategy, attestation, verify } = await buildProposal({ goals: message, amountBase });
+    const allocStr = strategy.allocations.map((a) => `${a.pct}% ${a.vaultName.replace(/^Unlink /, "")}`).join(" + ");
+    const lead = parsed
+      ? `Got it — ${human(amountBase)} it is. `
+      : `You didn't give an amount, so I'll assume ${human(amountBase)} (your private balance). `;
+    const reply =
+      `${lead}Here's my plan: ${allocStr}, ~${strategy.blendedApy}% blended APY (${strategy.riskLevel} risk). ` +
+      `${strategy.rationale ? strategy.rationale + " " : ""}` +
+      `It rebalances ${strategy.rebalance.frequency} when there's ${strategy.rebalance.trigger}. ` +
+      `Sound good? Confirm to deploy — you'll approve it on your Ledger.`;
+    return c.json({ ok: true, reply, assumedAmount: !parsed, amountBase, strategy, attestation, verify });
   } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
 });
 

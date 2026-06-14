@@ -412,8 +412,12 @@ app.post("/api/strategy/deploy", async (c) => {
   if (!S) return c.json({ error: "not connected" }, 400);
   const s = LAST_STRATEGY;
   if (!s || !s.allocations?.length) return c.json({ error: "propose a strategy first" }, 400);
-  const total = BigInt(s.amountBase);
-  const receiver = ETH_ADDR || LEDGER_ETH;
+
+  // Cap the deploy to the private balance (so a big quoted amount still works).
+  const bal = (await balanceList()).find((b) => b.token.toLowerCase().includes("036cbd"));
+  const balBase = BigInt(bal?.amount || "0");
+  if (balBase === 0n) return c.json({ error: "no private balance to deploy — shield some USDC first" }, 400);
+  const total = BigInt(s.amountBase) <= balBase ? BigInt(s.amountBase) : balBase;
 
   // split the capital across the allocations (the last one gets the remainder)
   let allocated = 0n;
@@ -421,24 +425,32 @@ app.post("/api/strategy/deploy", async (c) => {
     const amt = i === s.allocations.length - 1 ? total - allocated : (total * BigInt(a.pct)) / 100n;
     allocated += i === s.allocations.length - 1 ? 0n : amt;
     return { ...a, amount: amt };
-  });
-  // one Execution Account, one Ledger approval: approve + deposit per vault
+  }).filter((p) => p.amount > 0n);
+  // one Execution Account, one Ledger approval: approve + depositSelf per vault,
+  // so the EA holds the shares and the autonomous agent can redeem/rebalance them.
   const calls = parts.flatMap((p) => [
     { target: USDC, value: "0", data: encodeFunctionData({ abi: ERC20_APPROVE, functionName: "approve", args: [p.vault, p.amount] }) },
-    { target: p.vault, value: "0", data: encodeFunctionData({ abi: ERC4626_DEPOSIT, functionName: "deposit", args: [p.amount, receiver] }) },
+    { target: p.vault, value: "0", data: encodeFunctionData({ abi: ERC4626_DEPOSIT_SELF, functionName: "depositSelf", args: [p.amount] }) },
   ]);
 
   const allocStr = s.allocations.map((a) => `${a.pct}% ${a.vaultName.replace(/^Unlink /, "")}`).join(", ");
   try {
     const approved = await reviewPairsOnDevice([
       ["Strategy", s.summary],
-      ["Deploy", human(s.amountBase)],
+      ["Deploy", human(total.toString())],
       ["Allocation", allocStr],
       ["Rebalance", `${s.rebalance.frequency}: ${s.rebalance.trigger}`],
     ]);
     if (!approved) return c.json({ error: "strategy rejected on device" }, 400);
-    const res = await S.client.execute({ token: USDC, amount: s.amountBase, calls });
-    return c.json({ ok: true, result: res, strategy: s, balances: await balanceList() });
+    const res = await S.client.execute({ token: USDC, amount: total.toString(), calls });
+    // Record one position per allocation on the new EA so the agent can manage them.
+    const accountIndex = res.execution?.account_index;
+    const created = parts.map((p) => {
+      const known = VAULTS.find((v) => v.address.toLowerCase() === p.vault.toLowerCase());
+      const pos = { id: String(Date.now()) + Math.round(Number(p.amount) % 1000), vault: p.vault, vaultName: known?.name || p.vaultName, apy: known?.apy ?? p.apy, accountIndex, shares: p.amount.toString() };
+      POSITIONS.push(pos); return pos;
+    });
+    return c.json({ ok: true, result: res, strategy: s, deployed: human(total.toString()), positions: created, balances: await balanceList() });
   } catch (e) { return c.json({ error: String(e.message || e) }, 500); }
 });
 

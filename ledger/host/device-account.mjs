@@ -138,7 +138,12 @@ export async function reviewPairsOnDevice(pairs) {
   let payload = Buffer.concat(parts).subarray(0, -1); // drop the trailing NUL
   if (payload.length > 255) payload = payload.subarray(0, 255);
   const apduHex = "e0090000" + payload.length.toString(16).padStart(2, "0") + payload.toString("hex");
-  return (await sendApduSW(apduHex, 120)) === "9000";
+  const sw = await sendApduSW(apduHex, 120);
+  if (sw === "9000") return true;
+  if (sw === "6985") return false; // user rejected on the device
+  // Surface common app-state errors with an actionable hint.
+  const hint = { "6d02": "open the Unlink app on your Ledger", "6d00": "open the Unlink app on your Ledger", "6e00": "wrong app — open the Unlink app", "5515": "unlock your Ledger" }[sw];
+  throw new Error(hint ? `${hint} (device ${sw})` : `device returned ${sw}`);
 }
 
 // Convenience for a plain transfer (Amount + recipient address).
